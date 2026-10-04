@@ -80,11 +80,11 @@ class TestObicoCachedFrame:
         assert "no-store" in response.headers.get("cache-control", "")
 
 
-class TestObicoSnapshotBaseUrl:
+class TestBambuddyInternalUrl:
     @pytest.mark.asyncio
     @pytest.mark.integration
     @pytest.mark.parametrize(
-        ("snapshot_base_url", "external_url", "expected_base"),
+        ("bambuddy_internal_url", "external_url", "expected_base"),
         [
             (None, "https://bambuddy.example.com", "https://bambuddy.example.com"),
             ("", "https://bambuddy.example.com/", "https://bambuddy.example.com"),
@@ -94,16 +94,16 @@ class TestObicoSnapshotBaseUrl:
         ],
     )
     async def test_saved_url_controls_snapshot_callback(
-        self, async_client: AsyncClient, snapshot_base_url, external_url, expected_base
+        self, async_client: AsyncClient, bambuddy_internal_url, external_url, expected_base
     ):
         updates = {"external_url": external_url, "obico_ml_url": "http://obico:3333"}
-        if snapshot_base_url is not None:
-            updates["obico_snapshot_base_url"] = snapshot_base_url
+        if bambuddy_internal_url is not None:
+            updates["bambuddy_internal_url"] = bambuddy_internal_url
         response = await async_client.put("/api/v1/settings/", json=updates)
         assert response.status_code == 200
         saved = (await async_client.get("/api/v1/settings/")).json()
         assert saved["external_url"] == external_url
-        assert saved["obico_snapshot_base_url"] == (snapshot_base_url or "")
+        assert saved["bambuddy_internal_url"] == (bambuddy_internal_url or "")
         status = (await async_client.get("/api/v1/obico/status")).json()
         assert status["external_url_configured"] is bool(expected_base)
 
@@ -131,15 +131,15 @@ class TestObicoSnapshotBaseUrl:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_empty_value_clears_the_snapshot_override(self, async_client: AsyncClient):
+    async def test_empty_value_clears_the_bambuddy_internal_url(self, async_client: AsyncClient):
         response = await async_client.put(
             "/api/v1/settings/",
-            json={"obico_snapshot_base_url": "http://bambuddy:8000", "external_url": "https://bambuddy.example.com"},
+            json={"bambuddy_internal_url": "http://bambuddy:8000", "external_url": "https://bambuddy.example.com"},
         )
         assert response.status_code == 200
-        response = await async_client.put("/api/v1/settings/", json={"obico_snapshot_base_url": ""})
+        response = await async_client.put("/api/v1/settings/", json={"bambuddy_internal_url": ""})
         assert response.status_code == 200
-        assert response.json()["obico_snapshot_base_url"] == ""
+        assert response.json()["bambuddy_internal_url"] == ""
         assert response.json()["external_url"] == "https://bambuddy.example.com"
         assert (await ObicoDetectionService()._load_settings())["external_url"] == "https://bambuddy.example.com"
 
