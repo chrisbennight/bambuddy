@@ -528,6 +528,13 @@ See the [Windows Installer Guide](https://wiki.bambuddy.cool/getting-started/win
 
 #### Docker (Linux / macOS / Windows via Docker Desktop)
 
+For this fork, set the Bambuddy service's `image` in your Compose file to
+`ghcr.io/chrisbennight/bambuddy:v0.2.4.9-pb.1`. Fork tags matching `v*-pb*`
+automatically build and publish images for `linux/amd64` and `linux/arm64` to
+GitHub Container Registry. The image tag matches the Git tag, and its labels
+record the source repository and commit. Publishing uses GitHub's built-in
+`GITHUB_TOKEN`; no additional registry secret is needed.
+
 **Option A: Pre-built image (fastest)**
 ```bash
 mkdir bambuddy && cd bambuddy
