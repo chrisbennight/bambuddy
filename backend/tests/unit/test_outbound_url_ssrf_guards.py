@@ -210,11 +210,11 @@ def test_settings_urls_permit_lan_hosts(field: str, url: str):
 @pytest.mark.parametrize("field", LAN_SERVICE_SETTINGS)
 @pytest.mark.parametrize("empty", ["", "   "])
 def test_settings_urls_accept_empty_meaning_not_configured(field: str, empty: str):
-    """Empty addresses remain valid for optional integrations."""
+    """Empty is the documented "fall back to the env var" value for all four."""
     assert AppSettingsUpdate(**{field: empty})
 
 
-@pytest.mark.parametrize("field", [field for field in LAN_SERVICE_SETTINGS if field != "obico_snapshot_base_url"])
+@pytest.mark.parametrize("field", LAN_SERVICE_SETTINGS)
 @pytest.mark.parametrize(
     "legacy",
     [
@@ -235,12 +235,6 @@ def test_settings_urls_do_not_newly_reject_scheme_less_legacy_values(field: str,
     obico_ml_url alongside every other Obico setting).
     """
     assert AppSettingsUpdate(**{field: legacy})
-
-
-@pytest.mark.parametrize("url", ["bambuddy:8000", "bambuddy", "http://", "/bambuddy"])
-def test_snapshot_base_url_requires_an_absolute_http_url(url: str):
-    with pytest.raises(ValueError):
-        AppSettingsUpdate(obico_snapshot_base_url=url)
 
 
 @pytest.mark.parametrize("field", LAN_SERVICE_SETTINGS)
@@ -579,7 +573,6 @@ GUARDED_BODY_URLS = {
     ("AppSettingsUpdate", "bambu_studio_api_url"),
     ("AppSettingsUpdate", "ha_url"),
     ("AppSettingsUpdate", "obico_ml_url"),
-    ("AppSettingsUpdate", "obico_snapshot_base_url"),
     ("AppSettingsUpdate", "orcaslicer_api_url"),
     ("AppSettingsUpdate", "spoolman_url"),  # assert_safe_spoolman_url at each consumer
     ("HATestConnectionRequest", "url"),  # homeassistant._validate_url

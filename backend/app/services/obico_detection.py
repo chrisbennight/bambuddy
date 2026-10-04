@@ -130,7 +130,6 @@ class ObicoDetectionService:
         keys = [
             "obico_enabled",
             "obico_ml_url",
-            "obico_snapshot_base_url",
             "obico_ml_token",
             "obico_sensitivity",
             "obico_action",
@@ -159,9 +158,7 @@ class ObicoDetectionService:
             "action": rows.get("obico_action", "notify"),
             "poll_interval": int(rows.get("obico_poll_interval", "10")),
             "enabled_printers": enabled_printers,
-            "external_url": (
-                (rows.get("obico_snapshot_base_url") or "").strip() or (rows.get("external_url") or "").strip()
-            ).rstrip("/"),
+            "external_url": (rows.get("external_url") or "").rstrip("/"),
         }
 
     # ---- main loop ----
@@ -304,8 +301,8 @@ class ObicoDetectionService:
         if not external_url:
             self._no_verdict(
                 printer_id,
-                "No snapshot URL configured — Obico's ML API needs a reachable URL to fetch the snapshot from. "
-                "Set Settings → Failure Detection → Snapshot base URL or Settings → Network → External URL.",
+                "external_url setting is empty — Obico's ML API needs a reachable URL to fetch the snapshot from. "
+                "Set Settings → General → External URL.",
             )
             return
 
