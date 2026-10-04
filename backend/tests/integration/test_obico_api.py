@@ -131,6 +131,20 @@ class TestObicoSnapshotBaseUrl:
         assert mock_client.get.await_count == bool(expected_base)
         assert svc.get_per_printer()[1]["class"] == ("safe" if expected_base else "error")
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_null_clears_the_snapshot_override(self, async_client: AsyncClient):
+        response = await async_client.put(
+            "/api/v1/settings/",
+            json={"obico_snapshot_base_url": "http://bambuddy:8000", "external_url": "https://bambuddy.example.com"},
+        )
+        assert response.status_code == 200
+        response = await async_client.put("/api/v1/settings/", json={"obico_snapshot_base_url": None})
+        assert response.status_code == 200
+        assert response.json()["obico_snapshot_base_url"] == ""
+        assert response.json()["external_url"] == "https://bambuddy.example.com"
+        assert (await ObicoDetectionService()._load_settings())["external_url"] == "https://bambuddy.example.com"
+
 
 class TestObicoPrinterStatus:
     """The lightweight /obico/printer-status endpoint for printer-card badges (#1546)."""

@@ -888,20 +888,24 @@ class AppSettingsUpdate(BaseModel):
     # read model must keep accepting whatever an older install already stored.
     location_sensor_alert_defaults: str | None = Field(default=None, max_length=2000)
 
+    @field_validator("obico_snapshot_base_url")
+    @classmethod
+    def normalize_obico_snapshot_base_url(cls, v: str | None) -> str:
+        return v or ""
+
     @field_validator(*LAN_SERVICE_URL_SETTINGS)
     @classmethod
     def validate_lan_service_url(cls, v: str | None, info: ValidationInfo) -> str | None:
         """Reject SSRF-unsafe outbound service URLs on save.
 
-        Empty (and whitespace-only) is the documented "not configured / fall
-        back to the env var" value for all four fields and must keep passing.
+        Empty (and whitespace-only) means "not configured" and must keep passing.
 
         Values that are not absolute URLs at all ("192.168.1.10:3333",
         "localhost:3333") are left alone rather than rejected. Two reasons:
 
-        - They are inert. Every consumer of these four settings goes through
-          httpx, which raises UnsupportedProtocol for a URL with no scheme, so
-          no request is ever issued and there is nothing to guard against.
+        - HTTP clients reject URLs without a scheme (httpx raises
+          UnsupportedProtocol), so no fetch is issued and there is nothing
+          to guard against.
         - They were storable before this validator existed, and the settings
           UI is a plain text input with no scheme enforcement. Newly rejecting
           them would break saves that have nothing to do with the URL: the

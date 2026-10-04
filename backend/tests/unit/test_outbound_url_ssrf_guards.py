@@ -210,7 +210,7 @@ def test_settings_urls_permit_lan_hosts(field: str, url: str):
 @pytest.mark.parametrize("field", LAN_SERVICE_SETTINGS)
 @pytest.mark.parametrize("empty", ["", "   "])
 def test_settings_urls_accept_empty_meaning_not_configured(field: str, empty: str):
-    """Empty is the documented "fall back to the env var" value for all four."""
+    """Empty addresses remain valid for optional integrations."""
     assert AppSettingsUpdate(**{field: empty})
 
 
