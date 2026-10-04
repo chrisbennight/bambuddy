@@ -917,11 +917,12 @@ class AppSettingsUpdate(BaseModel):
         ``urlparse`` is no help in telling the two apart — it reads
         "localhost:3333" as scheme "localhost" — so the test is the literal
         "://" that makes a string an absolute URL.
+        The optional snapshot override requires an absolute HTTP(S) URL.
         """
         if v is None or not v.strip():
             return v
         candidate = v.strip()
-        if "://" not in candidate:
+        if "://" not in candidate and info.field_name != "obico_snapshot_base_url":
             return v
         # Lazy-imported: schemas avoid top-level imports from api/routes,
         # matching the existing pattern in auth.py's _validate_icon_url.

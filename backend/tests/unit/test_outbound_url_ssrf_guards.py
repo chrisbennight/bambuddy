@@ -214,7 +214,7 @@ def test_settings_urls_accept_empty_meaning_not_configured(field: str, empty: st
     assert AppSettingsUpdate(**{field: empty})
 
 
-@pytest.mark.parametrize("field", LAN_SERVICE_SETTINGS)
+@pytest.mark.parametrize("field", [field for field in LAN_SERVICE_SETTINGS if field != "obico_snapshot_base_url"])
 @pytest.mark.parametrize(
     "legacy",
     [
@@ -235,6 +235,12 @@ def test_settings_urls_do_not_newly_reject_scheme_less_legacy_values(field: str,
     obico_ml_url alongside every other Obico setting).
     """
     assert AppSettingsUpdate(**{field: legacy})
+
+
+@pytest.mark.parametrize("url", ["bambuddy:8000", "bambuddy", "http://", "/bambuddy"])
+def test_snapshot_base_url_requires_an_absolute_http_url(url: str):
+    with pytest.raises(ValueError):
+        AppSettingsUpdate(obico_snapshot_base_url=url)
 
 
 @pytest.mark.parametrize("field", LAN_SERVICE_SETTINGS)
