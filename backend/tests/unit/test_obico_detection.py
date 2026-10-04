@@ -461,7 +461,23 @@ class TestCheckPrinterUsesCachedFrameUrl:
         _frame_cache.clear()
 
     @pytest.mark.asyncio
-    async def test_ml_api_called_with_cached_frame_url(self):
+    @pytest.mark.parametrize(
+        ("snapshot_base_url", "external_url", "expected_base_url"),
+        [
+            (None, "https://bambuddy.example.com", "https://bambuddy.example.com"),
+            ("", "https://bambuddy.example.com", "https://bambuddy.example.com"),
+            ("   ", "https://bambuddy.example.com", "https://bambuddy.example.com"),
+            (" http://bambuddy:8000/ ", "https://bambuddy.example.com", "http://bambuddy:8000"),
+            ("http://bambuddy:8000", "", "http://bambuddy:8000"),
+        ],
+    )
+    async def test_ml_api_called_with_cached_frame_url(
+        self, monkeypatch, snapshot_base_url, external_url, expected_base_url
+    ):
+        if snapshot_base_url is None:
+            monkeypatch.delenv("OBICO_SNAPSHOT_BASE_URL", raising=False)
+        else:
+            monkeypatch.setenv("OBICO_SNAPSHOT_BASE_URL", snapshot_base_url)
         svc = ObicoDetectionService()
         settings = {
             "enabled": True,
@@ -470,7 +486,7 @@ class TestCheckPrinterUsesCachedFrameUrl:
             "action": "notify",
             "poll_interval": 10,
             "enabled_printers": None,
-            "external_url": "http://bambuddy:8000",
+            "external_url": external_url,
         }
         status = MagicMock(state="RUNNING", task_name="job", subtask_name="")
 
@@ -493,7 +509,8 @@ class TestCheckPrinterUsesCachedFrameUrl:
         _args, kwargs = mock_client.get.call_args
         assert _args[0] == "http://obico:3333/p/"
         img_url = kwargs["params"]["img"]
-        assert img_url.startswith("http://bambuddy:8000/api/v1/obico/cached-frame/")
+        assert img_url.startswith(f"{expected_base_url}/api/v1/obico/cached-frame/")
+        assert settings["external_url"] == external_url
         # The path segment after /cached-frame/ is the nonce itself — that nonce must
         # resolve back to our stashed frame (single-use guarantees freshness).
         nonce = img_url.rsplit("/", 1)[-1]

@@ -10,6 +10,7 @@ See `obico_smoothing.py` for the per-print EWM + rolling-mean math.
 import asyncio
 import json
 import logging
+import os
 import secrets
 import time
 from collections import deque
@@ -249,7 +250,9 @@ class ObicoDetectionService:
             logger.warning(self._last_error)
             return
 
-        external_url = settings.get("external_url") or ""
+        external_url = (
+            os.environ.get("OBICO_SNAPSHOT_BASE_URL", "").strip().rstrip("/") or settings.get("external_url") or ""
+        )
         if not external_url:
             self._last_error = (
                 "external_url setting is empty — Obico's ML API needs a reachable URL to fetch the snapshot from. "
