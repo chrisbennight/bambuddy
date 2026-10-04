@@ -19,7 +19,13 @@ from backend.app.utils.printer_models import MAX_CHAMBER_TEMP_C
 # tests/unit/test_outbound_url_ssrf_guards.py can import the real list and
 # cannot drift from it. Any new outbound-URL setting belongs here (or, if it
 # must be reachable on the public internet, on the stricter OIDC guard).
-LAN_SERVICE_URL_SETTINGS = ("ha_url", "obico_ml_url", "orcaslicer_api_url", "bambu_studio_api_url")
+LAN_SERVICE_URL_SETTINGS = (
+    "ha_url",
+    "obico_ml_url",
+    "obico_snapshot_base_url",
+    "orcaslicer_api_url",
+    "bambu_studio_api_url",
+)
 
 # ``docker_compose_dir`` is unusual among the string settings: it is not
 # consumed by Bambuddy at all, it is interpolated into a shell command that
@@ -645,6 +651,9 @@ class AppSettings(BaseModel):
         default="",
         description="Self-hosted Obico ML API base URL (e.g., http://192.168.1.10:3333)",
     )
+    obico_snapshot_base_url: str = Field(
+        default="", description="Bambuddy URL for Obico snapshots; empty uses External URL"
+    )
     obico_ml_token: str = Field(
         default="",
         description=(
@@ -864,6 +873,7 @@ class AppSettingsUpdate(BaseModel):
     ldap_default_group: str | None = None
     obico_enabled: bool | None = None
     obico_ml_url: str | None = None
+    obico_snapshot_base_url: str | None = None
     obico_ml_token: str | None = None
     obico_sensitivity: str | None = None
     obico_action: str | None = None
