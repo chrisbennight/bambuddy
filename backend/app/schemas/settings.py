@@ -19,13 +19,7 @@ from backend.app.utils.printer_models import MAX_CHAMBER_TEMP_C
 # tests/unit/test_outbound_url_ssrf_guards.py can import the real list and
 # cannot drift from it. Any new outbound-URL setting belongs here (or, if it
 # must be reachable on the public internet, on the stricter OIDC guard).
-LAN_SERVICE_URL_SETTINGS = (
-    "ha_url",
-    "obico_ml_url",
-    "obico_snapshot_base_url",
-    "orcaslicer_api_url",
-    "bambu_studio_api_url",
-)
+LAN_SERVICE_URL_SETTINGS = ("ha_url", "obico_ml_url", "orcaslicer_api_url", "bambu_studio_api_url")
 
 # ``docker_compose_dir`` is unusual among the string settings: it is not
 # consumed by Bambuddy at all, it is interpolated into a shell command that
@@ -651,9 +645,6 @@ class AppSettings(BaseModel):
         default="",
         description="Self-hosted Obico ML API base URL (e.g., http://192.168.1.10:3333)",
     )
-    obico_snapshot_base_url: str = Field(
-        default="", description="Bambuddy URL for Obico snapshots; empty uses External URL"
-    )
     obico_ml_token: str = Field(
         default="",
         description=(
@@ -873,7 +864,6 @@ class AppSettingsUpdate(BaseModel):
     ldap_default_group: str | None = None
     obico_enabled: bool | None = None
     obico_ml_url: str | None = None
-    obico_snapshot_base_url: str | None = None
     obico_ml_token: str | None = None
     obico_sensitivity: str | None = None
     obico_action: str | None = None
@@ -888,24 +878,20 @@ class AppSettingsUpdate(BaseModel):
     # read model must keep accepting whatever an older install already stored.
     location_sensor_alert_defaults: str | None = Field(default=None, max_length=2000)
 
-    @field_validator("obico_snapshot_base_url")
-    @classmethod
-    def normalize_obico_snapshot_base_url(cls, v: str | None) -> str:
-        return v or ""
-
     @field_validator(*LAN_SERVICE_URL_SETTINGS)
     @classmethod
     def validate_lan_service_url(cls, v: str | None, info: ValidationInfo) -> str | None:
         """Reject SSRF-unsafe outbound service URLs on save.
 
-        Empty (and whitespace-only) means "not configured" and must keep passing.
+        Empty (and whitespace-only) is the documented "not configured / fall
+        back to the env var" value for all four fields and must keep passing.
 
         Values that are not absolute URLs at all ("192.168.1.10:3333",
         "localhost:3333") are left alone rather than rejected. Two reasons:
 
-        - HTTP clients reject URLs without a scheme (httpx raises
-          UnsupportedProtocol), so no fetch is issued and there is nothing
-          to guard against.
+        - They are inert. Every consumer of these four settings goes through
+          httpx, which raises UnsupportedProtocol for a URL with no scheme, so
+          no request is ever issued and there is nothing to guard against.
         - They were storable before this validator existed, and the settings
           UI is a plain text input with no scheme enforcement. Newly rejecting
           them would break saves that have nothing to do with the URL: the
@@ -917,12 +903,11 @@ class AppSettingsUpdate(BaseModel):
         ``urlparse`` is no help in telling the two apart — it reads
         "localhost:3333" as scheme "localhost" — so the test is the literal
         "://" that makes a string an absolute URL.
-        The optional snapshot override requires an absolute HTTP(S) URL.
         """
         if v is None or not v.strip():
             return v
         candidate = v.strip()
-        if "://" not in candidate and info.field_name != "obico_snapshot_base_url":
+        if "://" not in candidate:
             return v
         # Lazy-imported: schemas avoid top-level imports from api/routes,
         # matching the existing pattern in auth.py's _validate_icon_url.
