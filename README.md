@@ -564,7 +564,7 @@ Open **http://localhost:8000** in your browser.
 | `OBICO_SNAPSHOT_BASE_URL` | Saved External URL | Base URL the Obico ML server uses to fetch snapshots; unset or blank keeps the saved External URL. |
 
 To use an internal Docker address for Obico snapshots, add
-`OBICO_SNAPSHOT_BASE_URL: http://bambuddy:8000` to the Bambuddy service's
+`- OBICO_SNAPSHOT_BASE_URL=http://bambuddy:8000` to the Bambuddy service's
 `environment` section and recreate the container. The ML server must be able to
 reach this address. Other features continue using the saved External URL.
 
