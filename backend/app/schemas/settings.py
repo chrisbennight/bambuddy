@@ -645,6 +645,9 @@ class AppSettings(BaseModel):
         default="",
         description="Self-hosted Obico ML API base URL (e.g., http://192.168.1.10:3333)",
     )
+    obico_snapshot_base_url: str = Field(
+        default="", description="Bambuddy URL for Obico snapshots; empty uses External URL"
+    )
     obico_ml_token: str = Field(
         default="",
         description=(
@@ -864,6 +867,7 @@ class AppSettingsUpdate(BaseModel):
     ldap_default_group: str | None = None
     obico_enabled: bool | None = None
     obico_ml_url: str | None = None
+    obico_snapshot_base_url: str | None = None
     obico_ml_token: str | None = None
     obico_sensitivity: str | None = None
     obico_action: str | None = None

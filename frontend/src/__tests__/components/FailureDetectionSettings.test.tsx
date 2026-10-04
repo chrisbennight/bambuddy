@@ -23,6 +23,7 @@ const baseSettings = {
   include_beta_updates: false,
   obico_enabled: false,
   obico_ml_url: '',
+  obico_snapshot_base_url: '',
   obico_ml_token: '',
   obico_sensitivity: 'medium',
   obico_action: 'notify',
@@ -60,6 +61,7 @@ describe('FailureDetectionSettings', () => {
     });
     expect(screen.getByText(/Obico ML API URL/i)).toBeInTheDocument();
     expect(screen.getByText(/Sensitivity/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('http://bambuddy:8000')).toBeDisabled();
   });
 
   it('test button calls the test-connection endpoint and shows success', async () => {
@@ -82,6 +84,31 @@ describe('FailureDetectionSettings', () => {
       expect(called).toBe(true);
     });
     expect(await screen.findByText(/ML API reachable/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['', 'http://bambuddy:8000'],
+    ['http://bambuddy:8000', ''],
+  ])('auto-saves a snapshot URL change from "%s" to "%s"', async (initial, next) => {
+    let settings = { ...baseSettings, obico_enabled: true, obico_snapshot_base_url: initial };
+    let saved: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/v1/settings/', () => HttpResponse.json(settings)),
+      http.put('/api/v1/settings/', async ({ request }) => {
+        saved = (await request.json()) as Record<string, unknown>;
+        settings = { ...settings, ...saved };
+        return HttpResponse.json(settings);
+      }),
+    );
+    render(<FailureDetectionSettings />);
+    const input = await screen.findByPlaceholderText('http://bambuddy:8000');
+    await waitFor(() => {
+      expect(input).not.toBeDisabled();
+      expect(input).toHaveValue(initial);
+    });
+    await userEvent.clear(input);
+    if (next) await userEvent.type(input, next);
+    await waitFor(() => expect(saved?.obico_snapshot_base_url).toBe(next), { timeout: 3000 });
   });
 
   describe('ML API token (#2733)', () => {

@@ -253,13 +253,14 @@ def test_every_url_setting_is_either_guarded_or_explicitly_exempt():
     added per-incident rather than to the whole class of fields.
     """
     exempt = {
-        # Bambuddy's own public address, not a destination it requests. It is
+        # Bambuddy's own address, not a destination it requests. It is
         # rendered into notification bodies and OIDC redirect URIs, and handed
         # to Obico's ML server as the `img` parameter for that server to fetch
         # (obico_detection.py builds `{external_url}/api/v1/obico/cached-frame/
         # {nonce}`). Pointing it at a private address only breaks Bambuddy's own
         # links; it cannot make Bambuddy request anything it otherwise wouldn't.
         "external_url",
+        "obico_snapshot_base_url",
         # Guarded by assert_safe_spoolman_url at each consumer (spoolman.py,
         # location_service.py, inventory.py, spoolbuddy.py,
         # spoolman_inventory.py) rather than in the schema, keeping its
@@ -608,6 +609,7 @@ GUARDED_BODY_URLS = {
 # Not a destination Bambuddy requests — no guard applies.
 NOT_A_FETCH_TARGET = {
     ("AppSettingsUpdate", "external_url"),  # Bambuddy's own address (see exempt list above)
+    ("AppSettingsUpdate", "obico_snapshot_base_url"),
     ("AppSettingsUpdate", "ldap_server_url"),  # ldap://, handed to an LDAP client
     ("ProjectCreate", "url"),  # stored link, rendered in the UI, never fetched
     ("ProjectUpdate", "url"),

@@ -18,6 +18,7 @@ export function FailureDetectionSettings() {
 
   const [enabled, setEnabled] = useState(false);
   const [mlUrl, setMlUrl] = useState('');
+  const [snapshotBaseUrl, setSnapshotBaseUrl] = useState('');
   const [mlToken, setMlToken] = useState('');
   const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>('medium');
   const [action, setAction] = useState<'notify' | 'pause' | 'pause_and_off'>('notify');
@@ -46,6 +47,7 @@ export function FailureDetectionSettings() {
     if (!settings) return;
     setEnabled(settings.obico_enabled ?? false);
     setMlUrl(settings.obico_ml_url ?? '');
+    setSnapshotBaseUrl(settings.obico_snapshot_base_url ?? '');
     setMlToken(settings.obico_ml_token ?? '');
     setSensitivity(settings.obico_sensitivity ?? 'medium');
     setAction(settings.obico_action ?? 'notify');
@@ -66,6 +68,7 @@ export function FailureDetectionSettings() {
       api.updateSettings({
         obico_enabled: enabled,
         obico_ml_url: mlUrl,
+        obico_snapshot_base_url: snapshotBaseUrl,
         obico_ml_token: mlToken,
         obico_sensitivity: sensitivity,
         obico_action: action,
@@ -87,13 +90,14 @@ export function FailureDetectionSettings() {
     return (
       settings.obico_enabled !== enabled ||
       settings.obico_ml_url !== mlUrl ||
+      settings.obico_snapshot_base_url !== snapshotBaseUrl ||
       (settings.obico_ml_token ?? '') !== mlToken ||
       settings.obico_sensitivity !== sensitivity ||
       settings.obico_action !== action ||
       settings.obico_poll_interval !== pollInterval ||
       settings.obico_enabled_printers !== (enabledPrinters === null ? '' : JSON.stringify(enabledPrinters))
     );
-  }, [settings, initialized, enabled, mlUrl, mlToken, sensitivity, action, pollInterval, enabledPrinters]);
+  }, [settings, initialized, enabled, mlUrl, snapshotBaseUrl, mlToken, sensitivity, action, pollInterval, enabledPrinters]);
 
   // Auto-save on change (debounced)
   useEffect(() => {
@@ -101,7 +105,7 @@ export function FailureDetectionSettings() {
     const id = setTimeout(() => saveMutation.mutate(), 500);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasUnsavedChanges, enabled, mlUrl, mlToken, sensitivity, action, pollInterval, enabledPrinters]);
+  }, [hasUnsavedChanges, enabled, mlUrl, snapshotBaseUrl, mlToken, sensitivity, action, pollInterval, enabledPrinters]);
 
   const handleTest = async () => {
     setTestResult(null);
@@ -213,6 +217,21 @@ export function FailureDetectionSettings() {
                   <span>{testResult.message}</span>
                 </div>
               )}
+            </div>
+
+            <div>
+              <label className="block text-sm text-bambu-gray mb-1">
+                {t('failureDetection.snapshotBaseUrl')}
+              </label>
+              <input
+                type="text"
+                value={snapshotBaseUrl}
+                onChange={(e) => setSnapshotBaseUrl(e.target.value)}
+                placeholder="http://bambuddy:8000"
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                disabled={!enabled}
+              />
+              <p className="text-xs text-bambu-gray mt-1">{t('failureDetection.snapshotBaseUrlHint')}</p>
             </div>
 
             <div>

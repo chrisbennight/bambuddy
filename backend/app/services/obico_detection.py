@@ -130,6 +130,7 @@ class ObicoDetectionService:
         keys = [
             "obico_enabled",
             "obico_ml_url",
+            "obico_snapshot_base_url",
             "obico_ml_token",
             "obico_sensitivity",
             "obico_action",
@@ -158,7 +159,7 @@ class ObicoDetectionService:
             "action": rows.get("obico_action", "notify"),
             "poll_interval": int(rows.get("obico_poll_interval", "10")),
             "enabled_printers": enabled_printers,
-            "external_url": (rows.get("external_url") or "").rstrip("/"),
+            "external_url": (rows.get("obico_snapshot_base_url") or rows.get("external_url") or "").rstrip("/"),
         }
 
     # ---- main loop ----
@@ -301,8 +302,8 @@ class ObicoDetectionService:
         if not external_url:
             self._no_verdict(
                 printer_id,
-                "external_url setting is empty — Obico's ML API needs a reachable URL to fetch the snapshot from. "
-                "Set Settings → General → External URL.",
+                "No snapshot URL configured — Obico's ML API needs a reachable URL to fetch the snapshot from. "
+                "Set Settings → Failure Detection → Snapshot base URL or Settings → Network → External URL.",
             )
             return
 
@@ -403,7 +404,7 @@ class ObicoDetectionService:
 
         ``error``    the most recent poll produced no verdict. ``error`` carries
                      the reason — a rejected token, an unreachable ML API, a
-                     camera that would not yield a frame, an unset External URL.
+                     camera that would not yield a frame, an unset snapshot address.
         ``unknown``  monitored, but no inference has come back yet. The state
                      entry is created when the print is first seen, which is
                      before the first capture, so this is the honest answer for
