@@ -756,7 +756,7 @@ class TestCheckPrinterUsesCachedFrameUrl:
 
         mock_client.get.assert_not_called()
         assert svc._last_error is not None
-        assert "Bambuddy Internal URL" in svc._last_error
+        assert "bambuddy_internal_url" in svc._last_error
 
     @pytest.mark.asyncio
     async def test_successful_cycle_clears_previous_error(self):

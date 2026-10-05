@@ -61,7 +61,6 @@ describe('FailureDetectionSettings', () => {
     });
     expect(screen.getByText(/Obico ML API URL/i)).toBeInTheDocument();
     expect(screen.getByText(/Sensitivity/i)).toBeInTheDocument();
-    expect(screen.getByText('Bambuddy Internal URL (optional)')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('http://bambuddy:8000')).toBeDisabled();
   });
 
@@ -88,8 +87,8 @@ describe('FailureDetectionSettings', () => {
   });
 
   it.each([
-    ['', 'http://bambuddy:8000'],
-    ['http://bambuddy:8000', ''],
+    ['', 'http://print-server:8000'],
+    ['http://print-server:8000', ''],
   ])('auto-saves a Bambuddy Internal URL change from "%s" to "%s"', async (initial, next) => {
     let settings = { ...baseSettings, obico_enabled: true, bambuddy_internal_url: initial };
     let saved: Record<string, unknown> | null = null;

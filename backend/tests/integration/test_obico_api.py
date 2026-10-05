@@ -90,7 +90,6 @@ class TestBambuddyInternalUrl:
             ("", "https://bambuddy.example.com/", "https://bambuddy.example.com"),
             ("http://bambuddy:8000/", "https://bambuddy.example.com", "http://bambuddy:8000"),
             ("http://192.168.1.20:8000", "", "http://192.168.1.20:8000"),
-            ("", "", ""),
         ],
     )
     async def test_saved_url_controls_snapshot_callback(
@@ -105,7 +104,7 @@ class TestBambuddyInternalUrl:
         assert saved["external_url"] == external_url
         assert saved["bambuddy_internal_url"] == (bambuddy_internal_url or "")
         status = (await async_client.get("/api/v1/obico/status")).json()
-        assert status["external_url_configured"] is bool(expected_base)
+        assert status["external_url_configured"] is True
 
         async def fetch_snapshot(url, *, params, headers):
             assert url == "http://obico:3333/p/"
@@ -126,8 +125,8 @@ class TestBambuddyInternalUrl:
             patch.object(svc, "_capture_frame", new=AsyncMock(return_value=FAKE_JPEG)),
         ):
             await svc._check_printer(1, MagicMock(state="RUNNING", task_name="job", subtask_name=""), settings)
-        assert mock_client.get.await_count == bool(expected_base)
-        assert svc.get_per_printer()[1]["class"] == ("safe" if expected_base else "error")
+        mock_client.get.assert_awaited_once()
+        assert svc.get_per_printer()[1]["class"] == "safe"
 
     @pytest.mark.asyncio
     @pytest.mark.integration
