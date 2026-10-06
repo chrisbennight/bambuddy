@@ -2292,9 +2292,23 @@ class PrintScheduler:
                             db=db,
                         )
 
-                        # Resolve the AMS mapping for the assigned printer when it's
-                        # missing OR unresolved (all -1). Critical for model-based
-                        # jobs where mapping wasn't computed upfront, and it also
+                        # A mapping on this item was not made for the printer just
+                        # picked: it came with a job moved here from a fixed
+                        # printer, or from a variant. Its tray IDs can name a
+                        # tray of the right type in another colour here, which
+                        # the fit check lets through (#3239). Match afresh, by
+                        # type and colour.
+                        if item.ams_mapping:
+                            logger.info(
+                                "Queue item %s: dropping stored ams_mapping %s, not made for printer %s",
+                                item.id,
+                                item.ams_mapping,
+                                printer_id,
+                            )
+                            item.ams_mapping = None
+
+                        # Resolve the AMS mapping for the assigned printer. It is
+                        # always missing here, so this computes it, and it also
                         # self-heals a bogus stored [-1] (#2589).
                         unmappable = await self._ensure_ams_mapping(db, printer_id, item)
                         if unmappable:
@@ -3535,6 +3549,19 @@ class PrintScheduler:
             await db.commit()
             return None
 
+        external_only = await self._external_spool_only_mapping(db, printer_id, item)
+        if external_only is not None:
+            item.ams_mapping = json.dumps(external_only)
+            logger.info(
+                "Queue item %s: printer %s has no AMS and its external spool has no filament set; "
+                "mapping every filament to it: %s",
+                item.id,
+                printer_id,
+                external_only,
+            )
+            await db.commit()
+            return None
+
         if _mapping_is_all_unresolved(stored_mapping):
             logger.warning(
                 "Queue item %s: stored ams_mapping %s is unresolved and could not be recomputed "
@@ -3547,6 +3574,62 @@ class PrintScheduler:
             await db.commit()
 
         return await self._unmappable_without_ams_message(db, printer_id, item, computed_mapping)
+
+    async def _external_spool_only_mapping(
+        self, db: AsyncSession, printer_id: int, item: PrintQueueItem
+    ) -> list[int] | None:
+        """Every filament on the external spool, for a printer that has nothing else (#3239).
+
+        A printer without an AMS prints from its external spool, and an external
+        spool whose filament was never set reports no type, so the matcher has
+        nothing to match. Sent without a mapping, the print goes out with the AMS
+        on and the firmware rejects it with 0700_8012. A stored ``[254]`` used
+        to carry such a job through; a job placed by model or location no longer
+        keeps one, and one queued that way never had one.
+
+        Only on a positive report: the printer has said it has no AMS, it has a
+        single external feed (a dual-nozzle printer's feeds steer nozzles, which
+        is not ours to pick), and no feed has a filament set — with one set, the
+        matcher has already given its answer. Not for a job that asked for its
+        colours to be matched strictly: a spool without a filament set has no
+        colour to check. Returns None otherwise.
+        """
+        if item.filament_overrides:
+            try:
+                overrides = json.loads(item.filament_overrides)
+            except (json.JSONDecodeError, TypeError):
+                return None
+            if not isinstance(overrides, list) or any(
+                isinstance(o, dict) and o.get("force_color_match") for o in overrides
+            ):
+                return None
+        status = printer_manager.get_status(printer_id)
+        if status is None or not isinstance(status.raw_data, dict):
+            return None
+        ams_units = status.raw_data.get("ams")
+        if not isinstance(ams_units, list) or ams_units:
+            return None
+        vt_trays = status.raw_data.get("vt_tray")
+        if not isinstance(vt_trays, list) or len(vt_trays) != 1 or not isinstance(vt_trays[0], dict):
+            return None
+        if self._build_loaded_filaments(status):
+            return None
+        printer = await self._get_printer(db, printer_id)
+        if _might_be_dual_nozzle(printer.model if printer else None, status):
+            return None
+        external = _int_or(vt_trays[0].get("id"), _EXTERNAL_TRAY_ID_MIN)
+        if external < _EXTERNAL_TRAY_ID_MIN:
+            return None
+
+        required = await self._get_filament_requirements(db, item)
+        slot_ids = [r.get("slot_id") for r in required or []]
+        slot_ids = [s for s in slot_ids if isinstance(s, int) and s > 0]
+        if not slot_ids:
+            return None
+        mapping = [-1] * max(slot_ids)
+        for slot_id in slot_ids:
+            mapping[slot_id - 1] = external
+        return mapping
 
     async def _fill_unresolved_slots(
         self,
@@ -3664,10 +3747,11 @@ class PrintScheduler:
         the firmware's own type check, so a PETG slot happily prints in ASA.
 
         Returns a short reason when the mapping names a tray this printer does
-        not have loaded, or points a slot at a tray holding a different filament
-        type. Returns None when the mapping fits, and — deliberately — whenever
-        we lack the evidence to judge, so a recompute only ever follows a
-        positive finding.
+        not have loaded, points a slot at a tray holding a different filament
+        type, or points it at an external spool this printer reports empty while
+        its AMS holds that slot's filament (#3239). Returns None when the
+        mapping fits, and — deliberately — whenever we lack the evidence to
+        judge, so a recompute only ever follows a positive finding.
 
         An unresolved (``-1``) required slot is NOT a conflict: it says the
         matcher had nothing, not that the mapping belongs to another printer,
@@ -3718,6 +3802,17 @@ class PrintScheduler:
             return None
         self._apply_filament_overrides(item, required)
 
+        # External feeds the printer reports and reports as empty. That is
+        # evidence, unlike an external feed it says nothing about (#3239).
+        empty_external: set[int] = set()
+        vt_trays = status.raw_data.get("vt_tray") if isinstance(status.raw_data, dict) else None
+        for vt in vt_trays if isinstance(vt_trays, list) else []:
+            if isinstance(vt, dict) and not vt.get("tray_type"):
+                try:
+                    empty_external.add(int(vt.get("id", 254)))
+                except (TypeError, ValueError):
+                    continue
+
         for req in required:
             slot_id = req.get("slot_id") or 0
             if slot_id <= 0:
@@ -3731,6 +3826,30 @@ class PrintScheduler:
 
             loaded_tray = by_tray.get(tray)
             if loaded_tray is None:
+                # A mapping made for a printer that feeds this slot from its
+                # external spool, sent to one whose external spool is empty and
+                # whose AMS holds the filament (#3239). Only then: an external
+                # spool can be loaded without its filament set, and on a printer
+                # with nothing else to offer that job printed before. The colour
+                # has to match too: with only another colour in the AMS, the
+                # printer asking for the spool beats printing in that colour.
+                want = canonical_filament_type(req.get("type"))
+                if tray >= 254 and tray in empty_external and want:
+                    ams_tray = next(
+                        (
+                            f
+                            for f in loaded
+                            if not f.get("is_external")
+                            and canonical_filament_type(f.get("type")) == want
+                            and self._colors_are_similar(f.get("color"), req.get("color"))
+                        ),
+                        None,
+                    )
+                    if ams_tray is not None:
+                        return (
+                            f"slot {slot_id} points at the external spool, which is empty, "
+                            f"while tray {ams_tray['global_tray_id']} holds {ams_tray.get('type')}"
+                        )
                 continue
 
             want = canonical_filament_type(req.get("type"))

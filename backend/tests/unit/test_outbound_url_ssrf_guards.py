@@ -312,7 +312,7 @@ def test_opaque_failure_logs_the_body_for_the_operator(caplog):
 
 @pytest.mark.parametrize(
     "provider_label",
-    ["ntfy server", "Bark server", "webhook endpoint", "Home Assistant endpoint"],
+    ["ntfy server", "Bark server", "Gotify server", "webhook endpoint", "Home Assistant endpoint"],
 )
 def test_user_supplied_host_providers_use_the_opaque_path(provider_label: str):
     """Guards the mapping itself: each user-supplied-host provider must route
@@ -370,6 +370,7 @@ def test_provider_url_guard_permits_self_hosted_servers(url: str):
     [
         ("ntfy", {"server": "http://169.254.169.254", "topic": "t"}),
         ("bark", {"server": "http://169.254.169.254", "device_key": "k"}),
+        ("gotify", {"server": "http://169.254.169.254", "app_token": "t"}),
         ("webhook", {"webhook_url": "http://169.254.169.254/latest/meta-data/"}),
     ],
 )

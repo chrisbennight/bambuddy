@@ -54,6 +54,7 @@ import {
   Play,
   ClipboardList,
   Zap,
+  Wrench,
   Cog,
   Archive as ArchiveIcon,
   History,
@@ -136,6 +137,7 @@ const LOG_COLUMN_LABEL_KEYS: Record<string, string> = {
   cost: 'archives.log.cost',
   energy: 'archives.log.energy',
   energy_cost: 'archives.log.energyCost',
+  wear_cost: 'archives.log.wearCost',
 };
 
 // Defaults reproduce the previous seven columns in the same order, plus the
@@ -155,6 +157,7 @@ const DEFAULT_LOG_COLUMNS: Array<{ id: string; visible: boolean }> = [
   { id: 'cost', visible: false },
   { id: 'energy', visible: false },
   { id: 'energy_cost', visible: false },
+  { id: 'wear_cost', visible: false },
 ];
 
 /** Stored config merged with the defaults: unknown ids (removed columns) are
@@ -1275,7 +1278,7 @@ function ArchiveCard({
               {archive.filament_used_grams.toFixed(1)}g
             </div>
           )}
-          {(archive.cost != null || archive.energy_cost != null) && (
+          {(archive.cost != null || archive.energy_cost != null || archive.wear_cost != null) && (
             <div className="flex items-center gap-3 text-bambu-gray">
               {archive.cost != null && (
                 <div className="flex items-center gap-1.5">
@@ -1287,6 +1290,12 @@ function ArchiveCard({
                   <div className="flex items-center gap-1.5" title={`${t('stats.energyUsed')}: ${archive.energy_kwh?.toFixed(3) || 'N/A'} kWh`}>
                     <Zap className="w-3 h-3" />
                     {currency}{archive.energy_cost.toFixed(2)}
+                  </div>
+                )}
+                {archive.wear_cost != null && (
+                  <div className="flex items-center gap-1.5" title={t('archives.card.wearCost')}>
+                    <Wrench className="w-3 h-3" />
+                    {currency}{archive.wear_cost.toFixed(2)}
                   </div>
                 )}
             </div>
@@ -3207,7 +3216,7 @@ export function ArchivesPage() {
   const handleLogSort = useCallback((colId: string) => {
     if (!SORTABLE_LOG_COLUMNS.has(colId)) return;
     setLogSort((prev) => {
-      const numericFirstDesc = ['date', 'completed_at', 'duration', 'filament_used', 'cost', 'energy', 'energy_cost'];
+      const numericFirstDesc = ['date', 'completed_at', 'duration', 'filament_used', 'cost', 'energy', 'energy_cost', 'wear_cost'];
       const next: LogSortState =
         prev.column === colId
           ? { column: colId, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
@@ -3230,7 +3239,7 @@ export function ArchivesPage() {
   // Columns that hold a number and read better right-aligned. Kept as data so
   // the header and the body can't drift apart.
   const LOG_NUMERIC_COLUMNS = useMemo(
-    () => new Set(['duration', 'filament_used', 'cost', 'energy', 'energy_cost']),
+    () => new Set(['duration', 'filament_used', 'cost', 'energy', 'energy_cost', 'wear_cost']),
     [],
   );
 
@@ -3346,6 +3355,12 @@ export function ArchivesPage() {
           return (
             <span className="text-bambu-gray-light whitespace-nowrap tabular-nums">
               {entry.energy_cost != null ? `${currency}${entry.energy_cost.toFixed(2)}` : '—'}
+            </span>
+          );
+        case 'wear_cost':
+          return (
+            <span className="text-bambu-gray-light whitespace-nowrap tabular-nums">
+              {entry.wear_cost != null ? `${currency}${entry.wear_cost.toFixed(2)}` : '—'}
             </span>
           );
         default:

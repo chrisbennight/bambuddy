@@ -173,6 +173,7 @@ import { BulkPrinterToolbar, type PrinterState } from '../components/BulkPrinter
 import { FileManagerModal } from '../components/FileManagerModal';
 import { EmbeddedCameraViewer } from '../components/EmbeddedCameraViewer';
 import { CameraWall } from '../components/CameraWall';
+import { DEFAULT_CAM_WALL_TILE_SIZE } from '../components/camWallTileSize';
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu';
 import { MQTTDebugModal } from '../components/MQTTDebugModal';
 import { HMSErrorModal, filterKnownHMSErrors, isSevereHMSError } from '../components/HMSErrorModal';
@@ -203,6 +204,7 @@ import { Collapsible } from '../components/Collapsible';
 import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/ConnectionDiagnostic';
 import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
 import { NumberInput } from '../components/NumberInput';
+import { getCurrencySymbol } from '../utils/currency';
 
 // The status filter's options, and the only values it may hold. One list so a
 // saved filter cannot be validated against a set the dropdown has since moved
@@ -8467,7 +8469,10 @@ function EditPrinterModal({
     location: printer.location || '',
     auto_archive: printer.auto_archive,
     is_active: printer.is_active,
+    wear_cost_per_hour: printer.wear_cost_per_hour ? String(printer.wear_cost_per_hour) : '',
   });
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings });
+  const currency = getCurrencySymbol(settings?.currency || 'USD');
 
   // Groups can be given a location (#1727), so a move changes who can use the
   // printer. Non-admins can't read groups; the server refuses their move instead.
@@ -8521,6 +8526,8 @@ function EditPrinterModal({
       location: form.location.trim() || null,
       auto_archive: form.auto_archive,
       is_active: form.is_active,
+      // Empty or 0 turns wear cost off for this printer (#694)
+      wear_cost_per_hour: Number(form.wear_cost_per_hour) > 0 ? Number(form.wear_cost_per_hour) : null,
     };
     // Only include access_code if it was changed
     if (form.access_code) {
@@ -8667,6 +8674,23 @@ function EditPrinterModal({
               <label htmlFor="edit_auto_archive" className="text-sm text-bambu-gray">
                 {t('printers.modal.autoArchiveLabel')}
               </label>
+            </div>
+            <div>
+              <label htmlFor="edit_wear_cost" className="block text-sm text-bambu-gray mb-1">
+                {t('printers.modal.wearCostLabel', { currency })}
+              </label>
+              <input
+                id="edit_wear_cost"
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                value={form.wear_cost_per_hour}
+                onChange={(e) => setForm({ ...form, wear_cost_per_hour: e.target.value })}
+                placeholder="0.00"
+              />
+              <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.wearCostHelp')}</p>
             </div>
             {/* Maintenance Mode toggle (#1476) — checkbox is the inverse of
                 is_active because the user-facing concept is "is this printer
@@ -8855,6 +8879,12 @@ export function PrintersPage() {
   // 'full' adds progress, layer, and time-left on printing/paused tiles.
   // Defaulting to 'full' because the cards already show this info — users who
   // pick cam-wall view still want to glance the same details without flipping.
+  // Kept apart from the card size: S on the cards also means the compact
+  // layout, and a wall of 2 cameras wants big tiles next to small cards (#2735).
+  const [camWallTileSize, setCamWallTileSize] = useState<number>(() => {
+    const saved = parseInt(localStorage.getItem('camWallTileSize') || '', 10);
+    return saved >= 1 && saved <= 4 ? saved : DEFAULT_CAM_WALL_TILE_SIZE;
+  });
   const [camWallStatusMode, setCamWallStatusMode] = useState<'off' | 'compact' | 'full'>(() => {
     const saved = localStorage.getItem('camWallStatusMode');
     return saved === 'off' || saved === 'compact' || saved === 'full' ? saved : 'full';
@@ -9710,14 +9740,19 @@ export function PrintersPage() {
       )}
 
       {/* Card size selector */}
-      <div className={`flex h-8 items-center bg-bambu-dark rounded-lg border border-bambu-dark-tertiary ${pageView === 'camwall' ? 'opacity-40 pointer-events-none' : ''} ${inMenu ? 'w-full' : ''}`}>
+      <div className={`flex h-8 items-center bg-bambu-dark rounded-lg border border-bambu-dark-tertiary ${inMenu ? 'w-full' : ''}`}>
         {cardSizeLabels.map((label, index) => {
           const size = index + 1;
-          const isSelected = cardSize === size;
+          const isSelected = (pageView === 'camwall' ? camWallTileSize : cardSize) === size;
           return (
             <button
               key={label}
               onClick={() => {
+                if (pageView === 'camwall') {
+                  setCamWallTileSize(size);
+                  localStorage.setItem('camWallTileSize', String(size));
+                  return;
+                }
                 setCompactDrilldownPrinterId(null);
                 setCardSize(size);
                 localStorage.setItem('printerCardSize', String(size));
@@ -9731,7 +9766,7 @@ export function PrintersPage() {
                   ? 'bg-bambu-green text-white'
                   : 'text-white hover:bg-bambu-dark-tertiary'
               }`}
-              title={label === 'S' ? t('printers.cardSize.small') : label === 'M' ? t('printers.cardSize.medium') : label === 'L' ? t('printers.cardSize.large') : t('printers.cardSize.extraLarge')}
+              title={t(`printers.${pageView === 'camwall' ? 'camWall.tileSize' : 'cardSize'}.${['small', 'medium', 'large', 'extraLarge'][index]}`)}
             >
               {label}
             </button>
@@ -9919,6 +9954,7 @@ export function PrintersPage() {
           printers={sortedPrinters}
           maxLive={camWallMaxLive}
           snapshotIntervalSec={camWallSnapshotSec}
+          tileSize={camWallTileSize}
           onTileClick={(id, name) => {
             // A wall tile has no room for a split button, so it follows the
             // mode the card buttons last chose.

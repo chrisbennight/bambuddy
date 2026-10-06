@@ -10,6 +10,7 @@ import {
   DollarSign,
   Target,
   Zap,
+  Wrench,
   AlertTriangle,
   TrendingDown,
   FileSpreadsheet,
@@ -133,6 +134,7 @@ function QuickStatsWidget({
     total_cost: number;
     total_energy_kwh: number;
     total_energy_cost: number;
+    total_wear_cost?: number;
     energy_data_warming_up?: boolean;
   } | undefined;
   currency: string;
@@ -163,6 +165,18 @@ function QuickStatsWidget({
       warning: warmingUp,
       tooltip: warmingUpTooltip,
     },
+    // Only once a printer has a wear cost set (#694), so installs without one
+    // don't get a tile that always reads zero.
+    ...((stats?.total_wear_cost ?? 0) > 0
+      ? [{
+          icon: Wrench,
+          color: 'text-slate-500 dark:text-slate-300',
+          label: t('stats.wearCost'),
+          value: `${currency} ${stats?.total_wear_cost?.toFixed(2) ?? '0.00'}`,
+          warning: false,
+          tooltip: undefined,
+        }]
+      : []),
   ];
 
   return (
@@ -897,9 +911,9 @@ function RecordsWidget({ archives, currency }: { archives: ArchiveSlim[]; curren
       });
     }
 
-    // Filament + measured energy (#1432); prints without a smart plug have
-    // energy_cost null and compete on filament cost alone.
-    const costliest = findMax(a => (a.cost ?? 0) + (a.energy_cost ?? 0));
+    // Filament + measured energy (#1432) + printer wear (#694); a cost that
+    // wasn't recorded is null and simply doesn't add.
+    const costliest = findMax(a => (a.cost ?? 0) + (a.energy_cost ?? 0) + (a.wear_cost ?? 0));
     if (costliest.archive) {
       result.push({
         icon: DollarSign, iconColor: 'text-green-600 dark:text-green-400', label: t('stats.mostExpensivePrint'),

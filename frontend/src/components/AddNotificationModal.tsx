@@ -12,10 +12,10 @@ interface AddNotificationModalProps {
   onClose: () => void;
 }
 
-const PROVIDER_VALUES: ProviderType[] = ['email', 'telegram', 'discord', 'ntfy', 'pushover', 'bark', 'callmebot', 'webhook', 'homeassistant'];
+const PROVIDER_VALUES: ProviderType[] = ['email', 'telegram', 'discord', 'ntfy', 'pushover', 'bark', 'gotify', 'callmebot', 'webhook', 'homeassistant'];
 
 export function AddNotificationModal({ provider, onClose }: AddNotificationModalProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const isEditing = !!provider;
 
@@ -73,8 +73,8 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
       : {},
   );
 
-  // Per-event ntfy priority (#990). Map of event key → 1-5. Persisted into
-  // config.event_priorities on save; only sent when the provider is ntfy.
+  // Per-event priority for ntfy (#990) and Gotify (#2743). Map of event key →
+  // 1-5. Persisted into config.event_priorities on save for those two only.
   const initialEventPriorities = (() => {
     const raw = provider?.config?.event_priorities;
     if (!raw || typeof raw !== 'object') return {} as Record<string, number>;
@@ -184,7 +184,7 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
     }
 
     const finalConfig: Record<string, unknown> =
-      providerType === 'ntfy' && Object.keys(eventPriorities).length > 0
+      (providerType === 'ntfy' || providerType === 'gotify') && Object.keys(eventPriorities).length > 0
         ? { ...config, event_priorities: eventPriorities }
         : config;
 
@@ -345,6 +345,11 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
             { value: 'passive', label: 'Passive (no sound)' },
           ]},
         ];
+      case 'gotify':
+        return [
+          { key: 'server', label: 'Server URL', placeholder: 'https://gotify.example.com', type: 'text', required: true },
+          { key: 'app_token', label: 'App Token', placeholder: 'Token of a Gotify application', type: 'password', required: true },
+        ];
       default:
         return [];
     }
@@ -411,11 +416,14 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
               disabled={isEditing}
               className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none disabled:opacity-50"
             >
-              {PROVIDER_VALUES.map((value) => (
-                <option key={value} value={value}>
-                  {t(`notifications.providerTypes.${value}`, value)}
-                </option>
-              ))}
+              {/* Sorted by the label shown, so the order holds in every language */}
+              {PROVIDER_VALUES.map((value) => ({ value, label: t(`notifications.providerTypes.${value}`, value) }))
+                .sort((a, b) => a.label.localeCompare(b.label, i18n.language, { sensitivity: 'base' }))
+                .map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
             </select>
             <p className="text-xs text-bambu-gray mt-1">
               {t(`notifications.providerDescriptions.${providerType}`, '')}
@@ -773,8 +781,8 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
               </div>
             </div>
 
-            {/* Per-event ntfy priority (#990) */}
-            {providerType === 'ntfy' && (() => {
+            {/* Per-event priority: ntfy (#990), Gotify (#2743) */}
+            {(providerType === 'ntfy' || providerType === 'gotify') && (() => {
               const enabledEvents: Array<{ key: string; label: string }> = [];
               if (onPrintStart) enabledEvents.push({ key: 'on_print_start', label: t('notifications.start') });
               if (onPrintComplete) enabledEvents.push({ key: 'on_print_complete', label: t('notifications.complete') });
@@ -801,9 +809,15 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
               return (
                 <div className="space-y-2 p-3 bg-bambu-dark rounded-lg">
                   <p className="text-xs text-bambu-gray uppercase tracking-wide mb-1">
-                    {t('notifications.eventPriority.sectionTitle')}
+                    {providerType === 'gotify'
+                      ? t('notifications.eventPriority.sectionTitleGotify')
+                      : t('notifications.eventPriority.sectionTitle')}
                   </p>
-                  <p className="text-xs text-bambu-gray mb-2">{t('notifications.eventPriority.helpNtfy')}</p>
+                  <p className="text-xs text-bambu-gray mb-2">
+                    {providerType === 'gotify'
+                      ? t('notifications.eventPriority.helpGotify')
+                      : t('notifications.eventPriority.helpNtfy')}
+                  </p>
                   <div className="space-y-2">
                     {enabledEvents.map((ev) => (
                       <div key={ev.key} className="flex items-center justify-between gap-3">

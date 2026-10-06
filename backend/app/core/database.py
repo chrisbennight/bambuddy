@@ -5302,6 +5302,14 @@ async def run_migrations(conn):
     await _safe_execute(conn, "ALTER TABLE library_folders ADD COLUMN shared BOOLEAN DEFAULT FALSE")
     await _backfill_library_folder_owners(conn)
 
+    # Migration: printer wear cost per printing hour, and the wear cost of each
+    # run and archive (#694). Nullable: no printer has a rate until one is set,
+    # and earlier prints keep no wear cost.
+    float_type = "REAL" if is_sqlite() else "DOUBLE PRECISION"
+    await _safe_execute(conn, f"ALTER TABLE printers ADD COLUMN wear_cost_per_hour {float_type}")
+    await _safe_execute(conn, f"ALTER TABLE print_log_entries ADD COLUMN wear_cost {float_type}")
+    await _safe_execute(conn, f"ALTER TABLE print_archives ADD COLUMN wear_cost {float_type}")
+
 
 async def _backfill_snapshot_prices(conn) -> None:
     """Give the energy snapshots taken before #1251 the price set at upgrade.
@@ -6235,6 +6243,28 @@ async def seed_default_groups():
         result = await session.execute(select(Group))
         existing_groups = {group.name: group for group in result.scalars().all()}
 
+        # The permission backfills below that reach custom groups run once
+        # each (#3238): an admin who takes a permission away from a group
+        # keeps it taken away. They used to run on every start, so a flag
+        # alone would hand everything back one last time on the upgrade that
+        # adds it. Whether a backfill already ran is read off the
+        # Administrators group as it was before this start changed anything:
+        # it holds every permission once a version that knew it has started,
+        # and each backfill shipped with the permission it is checked against.
+        # Taken now, because the Administrators sync below would otherwise make
+        # every later backfill look done on the very start that should run it.
+        # A wrong guess can only run a backfill once more, never skip one that
+        # is due.
+        admin_at_start = existing_groups.get("Administrators")
+        admin_perms_at_start = set(admin_at_start.permissions or []) if admin_at_start is not None else None
+
+        async def _backfill_due(flag_key: str, shipped_with: str) -> bool:
+            flag = (await session.execute(select(Settings).where(Settings.key == flag_key))).scalar_one_or_none()
+            if flag is not None:
+                return False
+            session.add(Settings(key=flag_key, value="true"))
+            return admin_perms_at_start is None or shipped_with not in admin_perms_at_start
+
         # Create default groups if they don't exist
         groups_created = []
         for group_name, group_config in DEFAULT_GROUPS.items():
@@ -6305,16 +6335,16 @@ async def seed_default_groups():
         await session.commit()
 
         # Migrate new permissions: grant printers:clear_plate to all groups with printers:control
-        result = await session.execute(select(Group))
-        all_groups = result.scalars().all()
-        for group in all_groups:
-            if (
-                group.permissions
-                and "printers:control" in group.permissions
-                and "printers:clear_plate" not in group.permissions
-            ):
-                group.permissions = [*group.permissions, "printers:clear_plate"]
-                logger.info("Added printers:clear_plate to group '%s' (has printers:control)", group.name)
+        if await _backfill_due("_backfill_446_clear_plate_permission_done", "printers:clear_plate"):
+            result = await session.execute(select(Group))
+            for group in result.scalars().all():
+                if (
+                    group.permissions
+                    and "printers:control" in group.permissions
+                    and "printers:clear_plate" not in group.permissions
+                ):
+                    group.permissions = [*group.permissions, "printers:clear_plate"]
+                    logger.info("Added printers:clear_plate to group '%s' (has printers:control)", group.name)
         await session.commit()
 
         # Migrate new permissions for MakerWorld integration: groups that
@@ -6323,24 +6353,25 @@ async def seed_default_groups():
         # groups that only have library:read get makerworld:view (browse
         # only). Matches the intent of DEFAULT_GROUPS without clobbering
         # any user-customised permission lists.
-        result = await session.execute(select(Group))
-        for group in result.scalars().all():
-            if not group.permissions:
-                continue
-            perms = list(group.permissions)
-            changed = False
-            if "library:upload" in perms:
-                for new_perm in ("makerworld:view", "makerworld:import"):
-                    if new_perm not in perms:
-                        perms.append(new_perm)
-                        changed = True
-                        logger.info("Added %s to group '%s' (has library:upload)", new_perm, group.name)
-            elif "library:read" in perms and "makerworld:view" not in perms:
-                perms.append("makerworld:view")
-                changed = True
-                logger.info("Added makerworld:view to group '%s' (has library:read)", group.name)
-            if changed:
-                group.permissions = perms
+        if await _backfill_due("_backfill_1099_makerworld_permissions_done", "makerworld:view"):
+            result = await session.execute(select(Group))
+            for group in result.scalars().all():
+                if not group.permissions:
+                    continue
+                perms = list(group.permissions)
+                changed = False
+                if "library:upload" in perms:
+                    for new_perm in ("makerworld:view", "makerworld:import"):
+                        if new_perm not in perms:
+                            perms.append(new_perm)
+                            changed = True
+                            logger.info("Added %s to group '%s' (has library:upload)", new_perm, group.name)
+                elif "library:read" in perms and "makerworld:view" not in perms:
+                    perms.append("makerworld:view")
+                    changed = True
+                    logger.info("Added makerworld:view to group '%s' (has library:read)", group.name)
+                if changed:
+                    group.permissions = perms
         await session.commit()
 
         # Manyfold (#1471) is a second model source beside MakerWorld, so a
@@ -6411,6 +6442,10 @@ async def seed_default_groups():
         # include it in the DEFAULT_GROUPS bootstrap, so this keeps upgrades
         # consistent. Viewers do NOT get orca_cloud:auth (read-only role,
         # not expected to author slicer presets / sync to Orca Cloud).
+        #
+        # Unlike the backfills around it, this one runs on every start on
+        # purpose: it only touches system groups, whose permissions no one can
+        # edit, so it can never undo an admin's choice and keeps them repaired.
         for non_admin_group_name in ("Operators", "Viewers"):
             grp = (await session.execute(select(Group).where(Group.name == non_admin_group_name))).scalar_one_or_none()
             if grp is None or grp.permissions is None:
@@ -6434,22 +6469,23 @@ async def seed_default_groups():
         # inventory:forecast_read was added after initial seeding, so groups
         # that already have inventory:read (or inventory:update) need it added.
         # inventory:forecast_write goes to any group with inventory:update.
-        result = await session.execute(select(Group))
-        for group in result.scalars().all():
-            if not group.permissions:
-                continue
-            perms = list(group.permissions)
-            changed = False
-            if "inventory:read" in perms and "inventory:forecast_read" not in perms:
-                perms.append("inventory:forecast_read")
-                changed = True
-                logger.info("Added inventory:forecast_read to group '%s' (backfill)", group.name)
-            if "inventory:update" in perms and "inventory:forecast_write" not in perms:
-                perms.append("inventory:forecast_write")
-                changed = True
-                logger.info("Added inventory:forecast_write to group '%s' (backfill)", group.name)
-            if changed:
-                group.permissions = perms
+        if await _backfill_due("_backfill_1184_forecast_permissions_done", "inventory:forecast_read"):
+            result = await session.execute(select(Group))
+            for group in result.scalars().all():
+                if not group.permissions:
+                    continue
+                perms = list(group.permissions)
+                changed = False
+                if "inventory:read" in perms and "inventory:forecast_read" not in perms:
+                    perms.append("inventory:forecast_read")
+                    changed = True
+                    logger.info("Added inventory:forecast_read to group '%s' (backfill)", group.name)
+                if "inventory:update" in perms and "inventory:forecast_write" not in perms:
+                    perms.append("inventory:forecast_write")
+                    changed = True
+                    logger.info("Added inventory:forecast_write to group '%s' (backfill)", group.name)
+                if changed:
+                    group.permissions = perms
         await session.commit()
 
         # Backfill pipeline permissions (#1425) for non-admin groups.
@@ -6457,33 +6493,32 @@ async def seed_default_groups():
         #   - Operators: all three (matches fresh-install DEFAULT_GROUPS)
         #   - Any other group with library:read_own or settings:read:
         #     pipelines:read only
-        result = await session.execute(select(Group))
-        for group in result.scalars().all():
-            if not group.permissions or group.name == "Administrators":
-                continue
-            perms = list(group.permissions)
-            changed = False
-            if group.name == "Operators":
-                for new_perm in ("pipelines:read", "pipelines:write", "pipelines:run"):
-                    if new_perm not in perms:
-                        perms.append(new_perm)
-                        changed = True
-                        logger.info("Added %s to Operators group (backfill)", new_perm)
-            elif "pipelines:read" not in perms and ("library:read_own" in perms or "settings:read" in perms):
-                perms.append("pipelines:read")
-                changed = True
-                logger.info("Added pipelines:read to group '%s' (backfill)", group.name)
-            if changed:
-                group.permissions = perms
+        if await _backfill_due("_backfill_1425_pipeline_permissions_done", "pipelines:read"):
+            result = await session.execute(select(Group))
+            for group in result.scalars().all():
+                if not group.permissions or group.name == "Administrators":
+                    continue
+                perms = list(group.permissions)
+                changed = False
+                if group.name == "Operators":
+                    for new_perm in ("pipelines:read", "pipelines:write", "pipelines:run"):
+                        if new_perm not in perms:
+                            perms.append(new_perm)
+                            changed = True
+                            logger.info("Added %s to Operators group (backfill)", new_perm)
+                elif "pipelines:read" not in perms and ("library:read_own" in perms or "settings:read" in perms):
+                    perms.append("pipelines:read")
+                    changed = True
+                    logger.info("Added pipelines:read to group '%s' (backfill)", group.name)
+                if changed:
+                    group.permissions = perms
         await session.commit()
 
         # queue:start_unreviewed (#1620): jobs of users without it wait for
         # someone to start them. Granted once to every group that could queue,
         # start or run jobs before it existed, so nothing changes on upgrade. Once
-        # only, unlike the backfills above: an admin removing it from a group is
-        # the whole point, and a per-boot backfill would hand it straight back.
-        from backend.app.models.settings import Settings
-
+        # only: an admin removing it from a group is the whole point, and a
+        # per-boot backfill would hand it straight back.
         review_flag = "_backfill_1620_queue_start_unreviewed_done"
         if (await session.execute(select(Settings).where(Settings.key == review_flag))).scalar_one_or_none() is None:
             result = await session.execute(select(Group))

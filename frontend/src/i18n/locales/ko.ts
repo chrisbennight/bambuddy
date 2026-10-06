@@ -347,6 +347,12 @@ export default {
           '이 카메라 월 링크는 더 이상 유효하지 않습니다. 토큰이 만료되었거나 취소되었을 수 있습니다.',
         loadFailed: '프린터를 불러오지 못했습니다.',
       },
+      tileSize: {
+        small: '작은 타일',
+        medium: '중간 타일',
+        large: '큰 타일',
+        extraLarge: '아주 큰 타일',
+      },
       noPrinters: '표시할 프린터가 없습니다',
       noSignal: '신호 없음',
       live: '라이브',
@@ -592,6 +598,8 @@ export default {
       locationGroup: '위치 / 그룹 (선택사항)',
       locationPlaceholder: '예: 작업실, 사무실, 지하실',
       autoArchiveLabel: '완료된 인쇄 자동 아카이브',
+      wearCostLabel: '출력 시간당 마모 비용 ({{currency}})',
+      wearCostHelp: '이 프린터로 한 시간 출력할 때 드는 마모 및 부품 비용입니다. 지금부터 모든 출력의 비용에 더해지며, 이전 출력은 바뀌지 않습니다. 비워 두면 꺼집니다.',
       fromPrinterSettings: '프린터 설정에서',
       modelOptional: '모델 (선택사항)',
       saveChanges: '변경사항 저장'
@@ -1114,6 +1122,7 @@ export default {
       filament: '{{weight}}g',
       layer: '{{count}}층',
       layers: '{{count}}층',
+      wearCost: '프린터 마모',
       object: '{{count}}개 객체',
       objects: '{{count}}개 객체',
       slicedFor: '{{model}}용으로 슬라이싱됨',
@@ -1199,6 +1208,7 @@ export default {
       cost: '비용',
       energy: '전력량',
       energyCost: '전력 비용',
+      wearCost: '마모 비용',
       completedAt: '완료',
       columns: '열',
       sortBy: '{{column}} 기준 정렬',
@@ -1656,6 +1666,7 @@ export default {
     totalCost: '총 비용',
     energyUsed: '사용된 에너지',
     energyCost: '에너지 비용',
+    wearCost: '마모 비용',
     energyWarmingUpTooltip: '에너지 추적이 시간별 스냅샷을 수집 중입니다. 날짜 범위 합계는 선택한 범위 이전에 하나 이상의 스냅샷이 존재하면 정확해집니다. 초기 값이 적게 집계될 수 있습니다.',
     averagePrintTime: '평균 인쇄 시간',
     printsPerDay: '일일 인쇄 수',
@@ -4327,6 +4338,7 @@ export default {
       totalCost: '총 비용',
       total: '합계',
       includesBom: 'BOM 포함',
+      wear: '프린터 마모',
       budget: '예산',
       remaining: '남은 예산'
     },
@@ -6277,7 +6289,8 @@ export default {
       discord: 'Discord',
       webhook: 'Webhook',
       homeassistant: 'Home Assistant',
-      bark: 'Bark'
+      bark: 'Bark',
+      gotify: 'Gotify'
     },
     providerDescriptions: {
       email: 'SMTP 이메일 알림',
@@ -6288,7 +6301,8 @@ export default {
       callmebot: 'CallMeBot을 통한 무료 WhatsApp 알림',
       webhook: '모든 URL에 일반 HTTP POST',
       homeassistant: 'Home Assistant 대시보드의 지속적인 알림',
-      bark: 'Bark를 통한 iOS 푸시 알림(셀프 호스팅 가능)'
+      bark: 'Bark를 통한 iOS 푸시 알림(셀프 호스팅 가능)',
+      gotify: '직접 운영하는 Gotify 서버를 통한 푸시 알림'
     },
     lastSuccess: '마지막: {{date}}',
     error: '오류',
@@ -6421,6 +6435,8 @@ export default {
     eventPriority: {
       sectionTitle: 'ntfy 우선순위',
       helpNtfy: '각 활성화된 이벤트에 대한 우선순위를 선택하세요. ntfy는 이를 사용하여 알림을 에스컬레이션합니다(소리, 가시성, 푸시 동작). 여기서 설정되지 않은 수준은 ntfy 서버 기본값을 사용합니다.',
+      sectionTitleGotify: 'Gotify 우선순위',
+      helpGotify: '각 활성화된 이벤트에 대한 우선순위를 선택하세요. Bambuddy는 최소, 낮음, 기본값, 높음, 긴급을 Gotify에 0, 2, 5, 8, 10으로 보냅니다. Gotify Android 앱에서는 기본값 이상이면 소리가 나고, 높음과 긴급은 팝업으로 표시됩니다.',
       min: '최소',
       low: '낮음',
       default: '기본값',
