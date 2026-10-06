@@ -111,6 +111,28 @@ describe('FailureDetectionSettings', () => {
     await waitFor(() => expect(saved?.bambuddy_internal_url).toBe(next), { timeout: 3000 });
   });
 
+  it('flags a Bambuddy Internal URL without a scheme and does not save it', async () => {
+    const puts: Record<string, unknown>[] = [];
+    server.use(
+      http.get('/api/v1/settings/', () =>
+        HttpResponse.json({ ...baseSettings, obico_enabled: true, bambuddy_internal_url: '' }),
+      ),
+      http.put('/api/v1/settings/', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        puts.push(body);
+        return HttpResponse.json({ ...baseSettings, ...body });
+      }),
+    );
+    render(<FailureDetectionSettings />);
+    const input = await screen.findByPlaceholderText('http://bambuddy:8000');
+    await waitFor(() => expect(input).not.toBeDisabled());
+    await userEvent.type(input, 'bambuddy:8000');
+    expect(await screen.findByText(/Must start with http:\/\/ or https:\/\//)).toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(puts.filter((body) => 'bambuddy_internal_url' in body)).toEqual([]);
+  });
+
   describe('ML API token (#2733)', () => {
     const enabledWithToken = {
       ...baseSettings,

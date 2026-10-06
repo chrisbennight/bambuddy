@@ -140,7 +140,41 @@ class TestBambuddyInternalUrl:
         assert response.status_code == 200
         assert response.json()["bambuddy_internal_url"] == ""
         assert response.json()["external_url"] == "https://bambuddy.example.com"
-        assert (await ObicoDetectionService()._load_settings())["external_url"] == "https://bambuddy.example.com"
+        assert (await ObicoDetectionService()._load_settings())["snapshot_base_url"] == "https://bambuddy.example.com"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "value",
+        ["bambuddy:8000", "192.168.1.20:8000", "ftp://bambuddy", "http://", "http://bam buddy:8000", "http://h:99999"],
+    )
+    async def test_address_without_http_scheme_is_rejected(self, async_client: AsyncClient, value):
+        response = await async_client.put("/api/v1/settings/", json={"bambuddy_internal_url": value})
+        assert response.status_code == 422
+        saved = (await async_client.get("/api/v1/settings/")).json()
+        assert saved["bambuddy_internal_url"] == ""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_null_clears_instead_of_storing_none(self, async_client: AsyncClient):
+        await async_client.put(
+            "/api/v1/settings/",
+            json={"bambuddy_internal_url": "http://bambuddy:8000", "external_url": "https://bambuddy.example.com"},
+        )
+        response = await async_client.put("/api/v1/settings/", json={"bambuddy_internal_url": None})
+        assert response.status_code == 200
+        assert response.json()["bambuddy_internal_url"] == ""
+        assert (await ObicoDetectionService()._load_settings())["snapshot_base_url"] == "https://bambuddy.example.com"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_surrounding_whitespace_is_stripped(self, async_client: AsyncClient):
+        response = await async_client.put(
+            "/api/v1/settings/", json={"bambuddy_internal_url": "  http://bambuddy:8000/ "}
+        )
+        assert response.status_code == 200
+        assert response.json()["bambuddy_internal_url"] == "http://bambuddy:8000/"
+        assert (await ObicoDetectionService()._load_settings())["snapshot_base_url"] == "http://bambuddy:8000"
 
 
 class TestObicoPrinterStatus:

@@ -159,7 +159,11 @@ class ObicoDetectionService:
             "action": rows.get("obico_action", "notify"),
             "poll_interval": int(rows.get("obico_poll_interval", "10")),
             "enabled_printers": enabled_printers,
-            "external_url": (rows.get("bambuddy_internal_url") or rows.get("external_url") or "").rstrip("/"),
+            # Where Obico's ML server fetches snapshots: the Internal URL when
+            # set, otherwise the public External URL.
+            "snapshot_base_url": (
+                (rows.get("bambuddy_internal_url") or "").strip() or (rows.get("external_url") or "").strip()
+            ).rstrip("/"),
         }
 
     # ---- main loop ----
@@ -298,8 +302,8 @@ class ObicoDetectionService:
             self._no_verdict(printer_id, f"Failed to capture snapshot for printer {printer_id}")
             return
 
-        external_url = settings.get("external_url") or ""
-        if not external_url:
+        snapshot_base_url = settings.get("snapshot_base_url") or ""
+        if not snapshot_base_url:
             self._no_verdict(
                 printer_id,
                 "bambuddy_internal_url and external_url settings are empty — Obico's ML API needs a reachable URL to fetch the snapshot from. "
@@ -308,7 +312,7 @@ class ObicoDetectionService:
             return
 
         nonce = await stash_frame(frame)
-        snapshot_url = f"{external_url}/api/v1/obico/cached-frame/{nonce}"
+        snapshot_url = f"{snapshot_base_url}/api/v1/obico/cached-frame/{nonce}"
         ml_url = f"{settings['ml_url']}/p/"
 
         try:

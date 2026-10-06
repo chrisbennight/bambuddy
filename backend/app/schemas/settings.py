@@ -1,6 +1,7 @@
 import json
 import re
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
@@ -991,6 +992,34 @@ class AppSettingsUpdate(BaseModel):
         if not isinstance(parsed, list) or not all(isinstance(item, int) for item in parsed):
             raise ValueError("obico_enabled_printers must be a JSON array of printer IDs (integers)")
         return v
+
+    @field_validator("bambuddy_internal_url")
+    @classmethod
+    def validate_bambuddy_internal_url(cls, v: str | None) -> str:
+        """Require an absolute http(s) URL, or empty to fall back to External URL.
+
+        Obico's ML server fetches snapshots from this address, so a value
+        without a scheme ("bambuddy:8000") would only fail later, mid-print,
+        as a snapshot error. Rejecting it here surfaces the mistake on save.
+
+        An explicit null clears the field. The settings updater stores None
+        as the literal "None", which would read back as an address.
+        """
+        candidate = (v or "").strip()
+        if not candidate:
+            return ""
+        error = "bambuddy_internal_url must be a full http:// or https:// address"
+        if any(ch.isspace() for ch in candidate):
+            raise ValueError(error)
+        try:
+            parsed = urlparse(candidate)
+            hostname = parsed.hostname
+            _ = parsed.port  # raises on a port outside 0-65535
+        except ValueError:
+            raise ValueError(error) from None
+        if parsed.scheme not in ("http", "https") or not hostname:
+            raise ValueError(error)
+        return candidate
 
     @staticmethod
     def _validate_preset_triple(v: str | None, field_name: str, lo: int, hi: int) -> str | None:

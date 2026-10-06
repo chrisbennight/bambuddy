@@ -36,7 +36,7 @@ async def get_status(
         "sensitivity": settings["sensitivity"],
         "action": settings["action"],
         "poll_interval": settings["poll_interval"],
-        "external_url_configured": bool(settings["external_url"]),
+        "external_url_configured": bool(settings["snapshot_base_url"]),
     }
 
 

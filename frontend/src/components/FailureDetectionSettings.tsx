@@ -11,6 +11,20 @@ import { NumberInput } from './NumberInput';
 
 type TestResult = { ok: boolean; message: string } | null;
 
+// The ML server fetches snapshots from this address, so it needs a scheme.
+// Empty falls back to External URL. Mirrors the backend validator, so a value
+// accepted here is never refused on save.
+function isValidInternalUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed === '') return true;
+  if (/\s/.test(trimmed) || !/^https?:\/\/[^\s/?#]/i.test(trimmed)) return false;
+  try {
+    return new URL(trimmed).hostname !== '';
+  } catch {
+    return false;
+  }
+}
+
 export function FailureDetectionSettings() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -26,6 +40,7 @@ export function FailureDetectionSettings() {
   const [enabledPrinters, setEnabledPrinters] = useState<number[] | null>(null); // null = all
   const [testResult, setTestResult] = useState<TestResult>(null);
   const [initialized, setInitialized] = useState(false);
+  const internalUrlValid = isValidInternalUrl(bambuddyInternalUrl);
 
   const { data: settings } = useQuery({
     queryKey: ['settings'],
@@ -68,7 +83,9 @@ export function FailureDetectionSettings() {
       api.updateSettings({
         obico_enabled: enabled,
         obico_ml_url: mlUrl,
-        bambuddy_internal_url: bambuddyInternalUrl,
+        // An invalid address is left out so the other fields still save; the
+        // field shows why it was not applied.
+        ...(internalUrlValid ? { bambuddy_internal_url: bambuddyInternalUrl.trim() } : {}),
         obico_ml_token: mlToken,
         obico_sensitivity: sensitivity,
         obico_action: action,
@@ -90,14 +107,14 @@ export function FailureDetectionSettings() {
     return (
       settings.obico_enabled !== enabled ||
       settings.obico_ml_url !== mlUrl ||
-      settings.bambuddy_internal_url !== bambuddyInternalUrl ||
+      (internalUrlValid && (settings.bambuddy_internal_url ?? '') !== bambuddyInternalUrl.trim()) ||
       (settings.obico_ml_token ?? '') !== mlToken ||
       settings.obico_sensitivity !== sensitivity ||
       settings.obico_action !== action ||
       settings.obico_poll_interval !== pollInterval ||
       settings.obico_enabled_printers !== (enabledPrinters === null ? '' : JSON.stringify(enabledPrinters))
     );
-  }, [settings, initialized, enabled, mlUrl, bambuddyInternalUrl, mlToken, sensitivity, action, pollInterval, enabledPrinters]);
+  }, [settings, initialized, enabled, mlUrl, bambuddyInternalUrl, internalUrlValid, mlToken, sensitivity, action, pollInterval, enabledPrinters]);
 
   // Auto-save on change (debounced)
   useEffect(() => {
@@ -230,7 +247,13 @@ export function FailureDetectionSettings() {
                 placeholder="http://bambuddy:8000"
                 className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                 disabled={!enabled}
+                aria-invalid={!internalUrlValid}
               />
+              {!internalUrlValid && (
+                <p className="text-xs text-red-700 dark:text-red-400 mt-1">
+                  {t('failureDetection.bambuddyInternalUrlInvalid')}
+                </p>
+              )}
               <p className="text-xs text-bambu-gray mt-1">{t('failureDetection.bambuddyInternalUrlHint')}</p>
             </div>
 
