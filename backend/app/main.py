@@ -4594,6 +4594,12 @@ async def on_print_start(printer_id: int, data: dict):
         # subtask_id is missing ("0" / local / non-cloud prints).
         if existing_archive is None:
             check_name = subtask_name or filename.split("/")[-1].replace(".gcode", "").replace(".3mf", "")
+            archive_filenames = [f"{check_name}.3mf", f"{check_name}.gcode.3mf"]
+            # A print started from the printer's screen names its file in full,
+            # so the forms above double its extension. The file itself is the
+            # one exact match, and nothing looser is added (#3009).
+            if _subtask_is_the_file(subtask_name, filename):
+                archive_filenames.append(subtask_name)
             existing = await db.execute(
                 select(PrintArchive)
                 .where(PrintArchive.printer_id == printer_id)
@@ -4601,12 +4607,7 @@ async def on_print_start(printer_id: int, data: dict):
                 .where(
                     or_(
                         PrintArchive.print_name == check_name,
-                        PrintArchive.filename.in_(
-                            [
-                                f"{check_name}.3mf",
-                                f"{check_name}.gcode.3mf",
-                            ]
-                        ),
+                        PrintArchive.filename.in_(archive_filenames),
                     )
                 )
                 .order_by(PrintArchive.created_at.desc())
@@ -4707,9 +4708,15 @@ async def on_print_start(printer_id: int, data: dict):
         # Bambu printers typically store files as "Name.gcode.3mf"
         # The subtask_name is usually the best source for the filename
         if subtask_name:
-            # Try common Bambu naming patterns
-            possible_names.append(f"{subtask_name}.gcode.3mf")
-            possible_names.append(f"{subtask_name}.3mf")
+            if _subtask_is_the_file(subtask_name, filename):
+                # A print started from the printer's own screen reports the
+                # file's full name, extension included. That is the file, so
+                # no extension is appended to it (#3009).
+                possible_names.append(subtask_name)
+            else:
+                # Try common Bambu naming patterns
+                possible_names.append(f"{subtask_name}.gcode.3mf")
+                possible_names.append(f"{subtask_name}.3mf")
 
         # Try original filename with .3mf extension
         if filename:
@@ -6532,7 +6539,99 @@ _PLATE_RESTORE_SETTLE_SECONDS = 12.0
 _FINISH_PHOTO_PRODUCER_WAIT_SECONDS = _PLATE_RESTORE_SETTLE_SECONDS + 23.0
 
 
-async def _max_z_for_current_print(printer_id: int, data: dict, logger) -> float | None:
+def _completion_print_keys(printer_id: int, filename: str, subtask_name: str) -> list[tuple[int, str]]:
+    """The ``_active_prints`` keys a finished print may be registered under.
+
+    Matching how they were registered in on_print_start. Shared by
+    ``on_print_complete`` and the finish-photo plate restore (#3240), which has
+    to find the same binding.
+    """
+    possible_keys = []
+
+    # Try subtask_name variations first (most reliable for matching)
+    if subtask_name:
+        possible_keys.append((printer_id, f"{subtask_name}.3mf"))
+        possible_keys.append((printer_id, f"{subtask_name}.gcode.3mf"))
+        possible_keys.append((printer_id, subtask_name))
+
+    # Try filename variations
+    if filename:
+        # Extract just the filename if it's a path
+        fname = filename.split("/")[-1] if "/" in filename else filename
+
+        if fname.endswith(".3mf"):
+            possible_keys.append((printer_id, fname))
+        elif fname.endswith(".gcode"):
+            base_name = fname.rsplit(".", 1)[0]
+            possible_keys.append((printer_id, f"{base_name}.gcode.3mf"))
+            possible_keys.append((printer_id, f"{base_name}.3mf"))
+            possible_keys.append((printer_id, fname))
+        else:
+            possible_keys.append((printer_id, f"{fname}.gcode.3mf"))
+            possible_keys.append((printer_id, f"{fname}.3mf"))
+            possible_keys.append((printer_id, fname))
+
+        # Also try full path versions
+        if filename.endswith(".3mf"):
+            possible_keys.append((printer_id, filename))
+        elif filename.endswith(".gcode"):
+            base_name = filename.rsplit(".", 1)[0]
+            possible_keys.append((printer_id, f"{base_name}.3mf"))
+            possible_keys.append((printer_id, filename))
+        else:
+            possible_keys.append((printer_id, f"{filename}.3mf"))
+            possible_keys.append((printer_id, filename))
+    return possible_keys
+
+
+def _archive_name_forms(archive) -> set[str]:
+    """The names an archive could be echoed back as, in normalised form (#3240).
+
+    Its print name, and its filename with and without the 3MF extension.
+    """
+    forms = set()
+    if archive.print_name:
+        forms.add(_normalise_subtask_name(archive.print_name))
+    if archive.filename:
+        forms.add(_normalise_subtask_name(archive.filename))
+        for suffix in (".gcode.3mf", ".3mf"):
+            if archive.filename.lower().endswith(suffix):
+                forms.add(_normalise_subtask_name(archive.filename[: -len(suffix)]))
+    forms.discard("")
+    return forms
+
+
+def _bound_print(printer_id: int, data: dict) -> tuple[int | None, int | None]:
+    """The archive and plate Bambuddy bound to the print ending on ``printer_id`` (#3240).
+
+    Read from ``_active_prints`` with the keys ``on_print_complete`` tries, and
+    from the plate recorded when the job was dispatched. Neither is touched:
+    ``on_print_complete`` pops both, which is why the finish-photo producer
+    calls this before its first await, while they are still there.
+
+    ``(None, None)`` for a print Bambuddy did not bind -- one it failed to
+    archive, or that it only knows by a name -- and on any error: the producer
+    calls this before the ``try`` that always releases the photo consumer, so
+    it must not raise.
+    """
+    try:
+        keys = _completion_print_keys(printer_id, str(data.get("filename") or ""), str(data.get("subtask_name") or ""))
+        archive_id = next((_active_prints[key] for key in keys if key in _active_prints), None)
+        if archive_id is None:
+            return None, None
+        return archive_id, _print_plate_ids.get(archive_id)
+    except Exception:
+        logging.getLogger(__name__).debug("Could not read the print binding for printer %s", printer_id, exc_info=True)
+        return None, None
+
+
+async def _max_z_for_current_print(
+    printer_id: int,
+    data: dict,
+    logger,
+    archive_id: int | None,
+    plate_id: int | None = None,
+) -> float | None:
     """Height of the print that just finished on ``printer_id``, or None (#2547).
 
     This number becomes the target of a real Z move, so every step here refuses
@@ -6540,28 +6639,45 @@ async def _max_z_for_current_print(printer_id: int, data: dict, logger) -> float
     failure that could drive the nozzle into the model: 20 mm carried onto a
     200 mm print would command the plate up through the part.
 
-    Two independent things therefore have to agree before a height is returned:
+    Three independent things therefore have to agree before a height is
+    returned:
 
-    1. **Identity.** The archive is matched by the finished print's own
-       ``subtask_name``, by equality rather than a ``LIKE``, so "Cube" can never
-       resolve to "Cube v2". Matching on "most recent archive for this printer"
-       is not good enough — ``on_print_complete`` pops the ``_active_prints``
-       binding concurrently with us, and a print Bambuddy failed to archive
-       would silently resolve to its predecessor.
-    2. **Corroboration.** The archive's layer count (parsed from the 3MF) has to
+    1. **Binding.** ``archive_id`` is the archive Bambuddy bound to this print
+       when it started (see ``_bound_print``), never one found by name. A name
+       is not an identity: every plate of a multi-plate file shares one, and a
+       reprint reuses its archive row, so the newest archive with the right
+       name can be another plate of the same file. Support bundles show the
+       old name lookup doing exactly that (archive 288 for a print bound to
+       169, 313 layers against 125), stopped only by the layer check below.
+       No binding, no move.
+    2. **Identity.** The bound archive's name still has to be the finished
+       print's ``subtask_name``, compared in ``_normalise_subtask_name`` form
+       because the printer echoes spaces as underscores (#3240). Exact: not a
+       substring, and not the completion check's tolerance for a truncated
+       echo.
+    3. **Corroboration.** The archive's layer count (parsed from the 3MF) has to
        match the layer count the printer itself reported over MQTT for the print
        that just ended. These come from genuinely different sources, so a
        mismatch means the row is not this print, whatever its name says.
 
-    ``completed`` is accepted alongside ``printing`` only because
+    ``plate_id`` is the plate the job was dispatched with; a reprint of one
+    plate of a multi-plate file reuses the archive row without updating its
+    ``plate_id``. ``completed`` is accepted alongside ``printing`` only because
     ``on_print_complete`` may already have flipped the status by the time we
-    run; the identity check above is what actually selects the row.
+    run.
     """
     subtask_name = (data.get("subtask_name") or "").strip()
     if not subtask_name:
         # Nothing to identify the print by — refuse rather than fall back to
         # "whatever ran last on this printer".
         logger.info("[PLATE-RESTORE] printer %s: print has no name to match on — skipping", printer_id)
+        return None
+    if archive_id is None:
+        logger.info(
+            "[PLATE-RESTORE] printer %s: %r is not bound to an archive — skipping",
+            printer_id,
+            subtask_name,
+        )
         return None
 
     try:
@@ -6570,24 +6686,24 @@ async def _max_z_for_current_print(printer_id: int, data: dict, logger) -> float
 
         async with async_session() as db:
             result = await db.execute(
-                select(PrintArchive)
-                .where(
+                select(PrintArchive).where(
+                    PrintArchive.id == archive_id,
                     PrintArchive.printer_id == printer_id,
                     PrintArchive.status.in_(("printing", "completed")),
                     PrintArchive.deleted_at.is_(None),
-                    or_(
-                        PrintArchive.print_name == subtask_name,
-                        PrintArchive.filename == subtask_name,
-                        PrintArchive.filename == f"{subtask_name}.3mf",
-                        PrintArchive.filename == f"{subtask_name}.gcode.3mf",
-                    ),
                 )
-                .order_by(PrintArchive.id.desc())
-                .limit(1)
             )
             archive = result.scalar_one_or_none()
         if archive is None or not archive.file_path:
-            logger.info("[PLATE-RESTORE] printer %s: no archive matches %r — skipping", printer_id, subtask_name)
+            logger.info("[PLATE-RESTORE] printer %s: archive %s has no usable file — skipping", printer_id, archive_id)
+            return None
+        if _normalise_subtask_name(subtask_name) not in _archive_name_forms(archive):
+            logger.warning(
+                "[PLATE-RESTORE] printer %s: archive %s is not named %r — refusing to move the plate",
+                printer_id,
+                archive_id,
+                subtask_name,
+            )
             return None
 
         client = printer_manager.get_client(printer_id)
@@ -6603,10 +6719,11 @@ async def _max_z_for_current_print(printer_id: int, data: dict, logger) -> float
             )
             return None
 
-        path = Path(archive.file_path)
-        if not path.is_absolute():
-            path = Path(app_settings.data_dir) / path
-        return await asyncio.to_thread(extract_max_z_height_from_3mf, path, archive.plate_id or 1)
+        # Stored relative to the data directory, like every other archive path
+        # (#3240: this read a `data_dir` setting that does not exist).
+        path = app_settings.base_dir / archive.file_path
+        plate = plate_id or archive.plate_id or 1
+        return await asyncio.to_thread(extract_max_z_height_from_3mf, path, plate)
     except Exception as e:
         logger.debug("[PLATE-RESTORE] printer %s: no usable print height: %s", printer_id, e)
         return None
@@ -6755,6 +6872,11 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
     producer_done = asyncio.Event()
     _stage22_finish_in_flight[printer_id] = producer_done
 
+    # #3240: also before the first await. On the FINISH-state path
+    # `on_print_complete` is dispatched right behind us and pops both the
+    # print's archive binding and its plate; read here, they are still there.
+    bound_archive_id, bound_plate_id = _bound_print(printer_id, data)
+
     # #2547: set once the plate has actually been raised, and read by the
     # `finally` below. Declared out here so a failure anywhere after the move —
     # a camera timeout, a DB error — still lowers the plate again.
@@ -6834,7 +6956,7 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
             and restore_plate_enabled
             and not print_dispatch_context.end_gcode_injected(printer_id)
         ):
-            wants_restore = await _max_z_for_current_print(printer_id, data, logger)
+            wants_restore = await _max_z_for_current_print(printer_id, data, logger, bound_archive_id, bound_plate_id)
             if wants_restore is None:
                 logger.info(
                     "[PLATE-RESTORE] printer %s: print height unknown — capturing without restore",
@@ -6943,6 +7065,19 @@ def _subtask_name_from_filename(filename: str) -> str:
     return name
 
 
+def _subtask_is_the_file(subtask_name: str, filename: str) -> bool:
+    """Whether the subtask name is the printed 3MF's own file name.
+
+    A print started from the printer's screen reports the same full name, with
+    its extension, as both subtask and file (#3009). A dispatched print reports
+    a bare subtask name; one that merely ends in ".3mf" can be a model named
+    that, whose file is ``Foo.3mf.gcode.3mf``, so it does not count.
+    """
+    if not subtask_name or not subtask_name.lower().endswith(".3mf"):
+        return False
+    return PurePosixPath((filename or "").split("://", 1)[-1]).name == subtask_name
+
+
 # How the printer marks a subtask name it had to cut short. Observed on real
 # hardware at ~100 characters, but the cut-off is not a fixed character count
 # (a name with multibyte characters came back at 98), so match the marker
@@ -6962,8 +7097,12 @@ def _normalise_subtask_name(name: str) -> str:
     directory search normalises both sides before comparing. This exists so
     the completion check reads the same rule from the same place instead of
     growing its own, which is exactly how it came to disagree (#2829).
+
+    A space at either end is substituted too: ``Part .gcode.3mf`` is
+    dispatched as ``Part `` and echoed as ``Part_``. Underscores at the ends
+    are dropped after the substitution so both sides agree (#3241).
     """
-    return name.strip().replace(" ", "_").casefold()
+    return name.strip().replace(" ", "_").strip("_").casefold()
 
 
 def _subtask_names_match(expected: str, observed: str) -> bool:
@@ -6982,7 +7121,13 @@ def _subtask_names_match(expected: str, observed: str) -> bool:
     # echoes, and an archive whose own filename was recorded from a previous
     # truncated echo carries the marker too.
     for full, cut in ((expected_n, observed_n), (observed_n, expected_n)):
-        if cut.endswith(_SUBTASK_TRUNCATION_MARKER) and full.startswith(cut[: -len(_SUBTASK_TRUNCATION_MARKER)]):
+        if not cut.endswith(_SUBTASK_TRUNCATION_MARKER):
+            continue
+        # The full side has lost its edge underscores; a cut that lands right
+        # after one keeps it, so drop it here too (#3241). Nothing left before
+        # the marker is no evidence of anything, and must not match every name.
+        kept = cut[: -len(_SUBTASK_TRUNCATION_MARKER)].rstrip("_")
+        if kept and full.startswith(kept):
             return True
     return False
 
@@ -7289,41 +7434,7 @@ async def on_print_complete(printer_id: int, data: dict):
     logger.info("Print complete - filename: %s, subtask: %s, status: %s", filename, subtask_name, data.get("status"))
 
     # Build list of possible keys to try (matching how they were registered in on_print_start)
-    possible_keys = []
-
-    # Try subtask_name variations first (most reliable for matching)
-    if subtask_name:
-        possible_keys.append((printer_id, f"{subtask_name}.3mf"))
-        possible_keys.append((printer_id, f"{subtask_name}.gcode.3mf"))
-        possible_keys.append((printer_id, subtask_name))
-
-    # Try filename variations
-    if filename:
-        # Extract just the filename if it's a path
-        fname = filename.split("/")[-1] if "/" in filename else filename
-
-        if fname.endswith(".3mf"):
-            possible_keys.append((printer_id, fname))
-        elif fname.endswith(".gcode"):
-            base_name = fname.rsplit(".", 1)[0]
-            possible_keys.append((printer_id, f"{base_name}.gcode.3mf"))
-            possible_keys.append((printer_id, f"{base_name}.3mf"))
-            possible_keys.append((printer_id, fname))
-        else:
-            possible_keys.append((printer_id, f"{fname}.gcode.3mf"))
-            possible_keys.append((printer_id, f"{fname}.3mf"))
-            possible_keys.append((printer_id, fname))
-
-        # Also try full path versions
-        if filename.endswith(".3mf"):
-            possible_keys.append((printer_id, filename))
-        elif filename.endswith(".gcode"):
-            base_name = filename.rsplit(".", 1)[0]
-            possible_keys.append((printer_id, f"{base_name}.3mf"))
-            possible_keys.append((printer_id, filename))
-        else:
-            possible_keys.append((printer_id, f"{filename}.3mf"))
-            possible_keys.append((printer_id, filename))
+    possible_keys = _completion_print_keys(printer_id, filename, subtask_name)
 
     # Find the archive for this print
     logger.info("Looking for archive in _active_prints, keys to try: %s...", possible_keys[:5])
@@ -7338,6 +7449,10 @@ async def on_print_complete(printer_id: int, data: dict):
             for k in keys_to_remove:
                 _active_prints.pop(k, None)
             break
+    # The archive bound when the print started, before the name search below.
+    # Only this one may give the finish-photo plate restore a height (#3240):
+    # the search matches names by substring.
+    bound_archive_id = archive_id
 
     if not archive_id:
         # Try to find by filename or subtask_name if not tracked (for prints started before app)
@@ -8253,7 +8368,9 @@ async def on_print_complete(printer_id: int, data: dict):
 
                         restore_setting = await get_setting(db, "finish_photo_restore_plate")
                     if restore_setting is None or restore_setting.lower() == "true":
-                        max_z = await _max_z_for_current_print(printer_id, data, logger)
+                        max_z = await _max_z_for_current_print(
+                            printer_id, data, logger, bound_archive_id, notify_plate_id
+                        )
                         if max_z is not None and not await _plate_restore_is_blocked_by_queue(printer_id):
                             if await _restore_plate_for_finish_photo(printer_id, max_z, logger):
                                 plate_restored_z = max_z

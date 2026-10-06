@@ -2,7 +2,8 @@
 
 A folder has an owner (``created_by_id``, the user who made it) and can be
 marked ``shared`` by an admin. A user with ``library:read_all`` (or any
-caller when auth is off, or an API key) sees every folder. A user with only
+caller when auth is off) sees every folder. An API key is passed in as its
+``ApiKeyActor`` and treated as its owner within its scopes. A user with only
 ``library:read_own`` sees:
 
   - folders they own,
@@ -14,7 +15,7 @@ They may write into (upload, extract, move files, create subfolders in)
 their own folders and shared ones, plus the root. Everything else is hidden:
 a folder they can't see answers 404, exactly like another user's file.
 
-A folder made without a user (auth off, an API key) is created shared, so
+A folder made without a user (auth off, a key without an owner) is created shared, so
 switching auth on later doesn't hide it. Folders from before #3201 got an
 owner or the shared flag from the upgrade backfill in ``core/database.py``.
 """
@@ -33,7 +34,7 @@ from backend.app.models.user import User
 
 
 def sees_all_folders(user: User | None) -> bool:
-    """True for ``library:read_all``, and for ``None`` (auth off or an API key)."""
+    """True for ``library:read_all``, and for ``None`` (auth off)."""
     return user is None or user.has_permission(Permission.LIBRARY_READ_ALL.value)
 
 

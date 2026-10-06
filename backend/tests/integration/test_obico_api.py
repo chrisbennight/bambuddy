@@ -273,7 +273,7 @@ class TestObicoPrinterStatusNoVerdict:
         # redaction under test is independent of them.
         loaded = {"enabled": True, "enabled_printers": None}
         with patch.object(obico_detection_service, "_load_settings", new=AsyncMock(return_value=loaded)):
-            data = await get_printer_status(user=user, printer_scope=ALL_PRINTERS)
+            data = await get_printer_status(user=user, printer_scope=ALL_PRINTERS, actor=user)
         entry = data["per_printer"][1]
         assert entry["class"] == "error"
         assert entry["error"] is None

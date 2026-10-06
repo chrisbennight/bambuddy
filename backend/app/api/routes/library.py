@@ -25,7 +25,9 @@ from backend.app.api.routes.cloud import resolve_api_key_cloud_owner
 from backend.app.api.routes.library_variants import normalize_model_name, resolve_variant_model
 from backend.app.api.routes.print_queue import _extract_filament_types_from_3mf
 from backend.app.core.auth import (
+    ApiKeyActor,
     QueueReviewRequired,
+    RequestActor,
     RequestPrinterScope,
     require_media_token_ownership,
     require_ownership_permission,
@@ -1240,11 +1242,12 @@ async def create_folder(
     data: FolderCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_UPLOAD)),
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Create a new folder, owned by the user who makes it (#3201)."""
     # A read_own user may only create inside their own or a shared folder.
     if data.parent_id is not None:
-        await get_writable_folder(db, data.parent_id, current_user)
+        await get_writable_folder(db, data.parent_id, actor)
 
     # Verify project exists if specified
     project_name = None
@@ -1269,14 +1272,14 @@ async def create_folder(
         parent_id=data.parent_id,
         project_id=data.project_id,
         archive_id=data.archive_id,
-        created_by_id=current_user.id if current_user else None,
-        # Made without a user (auth off, an API key): everyone's, as before #3201.
-        shared=current_user is None,
+        created_by_id=actor.id if actor else None,
+        # Made without a user (auth off, a key without an owner): everyone's, as before #3201.
+        shared=actor is None or actor.id is None,
     )
     db.add(folder)
     await db.commit()
     await db.refresh(folder)
-    index = await _load_index(db, current_user)
+    index = await _load_index(db, actor)
 
     return FolderResponse(
         id=folder.id,
@@ -1294,7 +1297,7 @@ async def create_folder(
         # New folder has no files yet — fall back to the folder's own
         # updated_at so this matches the list-route semantics (#1770).
         latest_activity_at=folder.updated_at,
-        **_folder_access_fields(index, folder, current_user),
+        **_folder_access_fields(index, folder, actor),
         created_at=folder.created_at,
         updated_at=folder.updated_at,
     )
@@ -1874,6 +1877,7 @@ async def scan_external_folder(
     folder_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_UPLOAD)),
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Scan an external folder and sync files to the database.
 
@@ -1881,7 +1885,7 @@ async def scan_external_folder(
     Does not copy files — stores the external path directly.
     """
     # A mount the user can't see is 404, like a missing one (#3201).
-    folder = await get_visible_folder(db, folder_id, current_user)
+    folder = await get_visible_folder(db, folder_id, actor)
     if not folder.is_external or not folder.external_path:
         raise HTTPException(status_code=400, detail="Not an external folder")
 
@@ -2393,6 +2397,7 @@ async def upload_file(
     generate_stl_thumbnails: bool = Query(default=True),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_UPLOAD)),
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Upload a file to the library."""
     try:
@@ -2415,7 +2420,7 @@ async def upload_file(
         # Verify folder exists if specified, and that the user may add to it (#3201)
         target_folder = None
         if folder_id is not None:
-            target_folder = await get_writable_folder(db, folder_id, current_user)
+            target_folder = await get_writable_folder(db, folder_id, actor)
 
         # Writable external folders write through to the mount so the file is
         # visible outside Bambuddy (#1112); everything else lands under the
@@ -2538,7 +2543,7 @@ async def upload_file(
             file_hash=file_hash,
             thumbnail_path=to_relative_path(thumbnail_path) if thumbnail_path else None,
             file_metadata=_without_print_name(metadata) if metadata else None,
-            created_by_id=current_user.id if current_user else None,
+            created_by_id=actor.id if actor else None,
         )
         db.add(library_file)
         await db.commit()
@@ -2569,6 +2574,7 @@ async def extract_zip_file(
     generate_stl_thumbnails: bool = Query(default=True),
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_UPLOAD)),
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Upload and extract a ZIP file to the library.
 
@@ -2586,7 +2592,7 @@ async def extract_zip_file(
 
     # Verify target folder exists if specified, and that the user may add to it (#3201)
     if folder_id is not None:
-        target_folder = await get_writable_folder(db, folder_id, current_user)
+        target_folder = await get_writable_folder(db, folder_id, actor)
         if target_folder.is_external and target_folder.external_readonly:
             raise HTTPException(status_code=403, detail="Cannot extract ZIP to a read-only external folder")
         if target_folder.is_external:
@@ -2635,7 +2641,7 @@ async def extract_zip_file(
         # Reuse a same-named folder only when the user may write to it; never
         # extract into someone else's folder that happens to share the name (#3201).
         existing_folder = next(
-            (f for f in existing.scalars().all() if can_write_folder(f, current_user)),
+            (f for f in existing.scalars().all() if can_write_folder(f, actor)),
             None,
         )
         if existing_folder:
@@ -2646,9 +2652,9 @@ async def extract_zip_file(
             new_folder = LibraryFolder(
                 name=zip_folder_name,
                 parent_id=folder_id,
-                created_by_id=current_user.id if current_user else None,
+                created_by_id=actor.id if actor else None,
                 # Made without a user (auth off, an API key): everyone's, as before #3201.
-                shared=current_user is None,
+                shared=actor is None or actor.id is None,
             )
             db.add(new_folder)
             await db.flush()
@@ -2700,7 +2706,7 @@ async def extract_zip_file(
                                         )
                                     )
                                     existing_folder = next(
-                                        (f for f in existing.scalars().all() if can_write_folder(f, current_user)),
+                                        (f for f in existing.scalars().all() if can_write_folder(f, actor)),
                                         None,
                                     )
 
@@ -2711,9 +2717,9 @@ async def extract_zip_file(
                                         new_folder = LibraryFolder(
                                             name=part,
                                             parent_id=current_parent,
-                                            created_by_id=current_user.id if current_user else None,
+                                            created_by_id=actor.id if actor else None,
                                             # Made without a user (auth off, an API key): everyone's, as before #3201.
-                                            shared=current_user is None,
+                                            shared=actor is None or actor.id is None,
                                         )
                                         db.add(new_folder)
                                         await db.flush()
@@ -2825,7 +2831,7 @@ async def extract_zip_file(
                         file_hash=file_hash,
                         thumbnail_path=to_relative_path(thumbnail_path) if thumbnail_path else None,
                         file_metadata=_without_print_name(metadata) if metadata else None,
-                        created_by_id=current_user.id if current_user else None,
+                        created_by_id=actor.id if actor else None,
                     )
                     db.add(library_file)
                     await db.flush()
@@ -3024,6 +3030,7 @@ async def combine_files(
     request: CombineFilesRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_UPLOAD)),
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Combine STL library files into one multi-object 3MF.
 
@@ -3044,11 +3051,11 @@ async def combine_files(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     if request.folder_id is not None:
-        await get_writable_folder(db, request.folder_id, current_user)
+        await get_writable_folder(db, request.folder_id, actor)
 
     # Same per-row visibility the slice route applies: a READ_OWN caller must
     # not be able to pull another user's model into their own file by raw id.
-    can_read_all = current_user is None or current_user.has_permission(Permission.LIBRARY_READ_ALL.value)
+    can_read_all = actor is None or actor.has_permission(Permission.LIBRARY_READ_ALL.value)
 
     # The same file listed twice is one object with the copies added up, so
     # its mesh is loaded and stored once. Order follows first appearance.
@@ -3061,7 +3068,7 @@ async def combine_files(
 
     # Gate every source before touching any of them on disk, so the answer for
     # a file the caller can't see is the same 404 whatever else is in the list.
-    sources = [_ensure_library_file_visible(by_id.get(file_id), current_user, can_read_all) for file_id in copies_by_id]
+    sources = [_ensure_library_file_visible(by_id.get(file_id), actor, can_read_all) for file_id in copies_by_id]
 
     parts: list[CombinePart] = []
     for lib_file in sources:
@@ -3086,7 +3093,7 @@ async def combine_files(
         filename=filename,
         folder_id=request.folder_id,
         source_type="combined",
-        owner_id=current_user.id if current_user else None,
+        owner_id=actor.id if actor else None,
     )
 
     return FileUploadResponse(
@@ -3106,6 +3113,7 @@ async def add_files_to_queue(
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.QUEUE_CREATE)),
     printer_scope: PrinterScope = RequestPrinterScope,
     review_required: bool = QueueReviewRequired,
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Add library files to the print queue.
 
@@ -3167,8 +3175,8 @@ async def add_files_to_queue(
     # same "File not found" an unknown id gets and the response says nothing
     # about which ids exist. Ownerless rows need LIBRARY_READ_ALL, matching
     # _ensure_library_file_visible.
-    if current_user is not None and not current_user.has_permission(Permission.LIBRARY_READ_ALL.value):
-        files = {fid: f for fid, f in files.items() if f.created_by_id == current_user.id}
+    if actor is not None and not actor.has_permission(Permission.LIBRARY_READ_ALL.value):
+        files = {fid: f for fid, f in files.items() if f.created_by_id == actor.id}
 
     # Project attribution (#1897): a file queued from a project-linked folder
     # inherits that project, so the resulting archive counts toward the
@@ -3286,7 +3294,7 @@ async def add_files_to_queue(
                 # Without this the row is ownerless, and `queue:read_own` filters
                 # on `created_by_id` — so the user who queued the file could not
                 # see it in their own queue.
-                created_by_id=current_user.id if current_user else None,
+                created_by_id=actor.id if actor else None,
                 # Waits for someone to start it unless they may print without review (#1620)
                 manual_start=review_required,
             )
@@ -5123,6 +5131,7 @@ async def slice_library_file(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_UPLOAD)),
     api_key_cloud_owner: User | None = Depends(resolve_api_key_cloud_owner),
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Enqueue a slice job for a library file. Returns 202 + job_id; the
     slice runs in the background, the caller polls `GET /slice-jobs/{id}`.
@@ -5139,10 +5148,10 @@ async def slice_library_file(
     # built-in Operators group) slice another user's model by raw id even though
     # GET on that id returned 404 — the sliced output was then attributed to and
     # downloadable by the requester. Enforce the same visibility the read routes
-    # use before reading the source off disk. API-key / auth-disabled callers
-    # (current_user is None) keep can_read_all=True — no per-row identity.
-    can_read_all = current_user is None or current_user.has_permission(Permission.LIBRARY_READ_ALL.value)
-    lib_file = _ensure_library_file_visible(lib_file, current_user, can_read_all)
+    # use before reading the source off disk. An API key is checked as its
+    # owner (RequestActor); only auth off keeps can_read_all=True.
+    can_read_all = actor is None or actor.has_permission(Permission.LIBRARY_READ_ALL.value)
+    lib_file = _ensure_library_file_visible(lib_file, actor, can_read_all)
 
     src_lower = (lib_file.filename or "").lower()
     if src_lower.endswith(".step") or src_lower.endswith(".stp"):

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.routes.library import save_3mf_bytes_to_library, validate_print_file_upload
 from backend.app.api.routes.settings import set_setting
-from backend.app.core.auth import RequirePermissionIfAuthEnabled
+from backend.app.core.auth import ApiKeyActor, RequestActor, RequirePermissionIfAuthEnabled
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.library import LibraryFile
@@ -291,7 +291,7 @@ async def get_preview(
 # ---- import -------------------------------------------------------------
 
 
-async def _import_folder_id(db: AsyncSession, folder_id: int | None, user: User | None) -> int | None:
+async def _import_folder_id(db: AsyncSession, folder_id: int | None, user: User | ApiKeyActor | None) -> int | None:
     """The chosen folder, or the top-level "Manyfold" folder (created on first use)."""
     if folder_id is not None:
         # Only into a folder the user may write to (#3201).
@@ -308,6 +308,7 @@ async def import_file(
     body: ManyfoldImportRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.MANYFOLD_IMPORT),
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Download one Manyfold file into the library.
 
@@ -343,7 +344,7 @@ async def import_file(
 
     filename = _library_filename(file["filename"], file_id)
     validate_print_file_upload(filename, data)
-    folder_id = await _import_folder_id(db, body.folder_id, current_user)
+    folder_id = await _import_folder_id(db, body.folder_id, actor)
     library_file, was_existing = await save_3mf_bytes_to_library(
         db,
         file_bytes=data,
@@ -351,7 +352,7 @@ async def import_file(
         folder_id=folder_id,
         source_type=manyfold_provider.source_type,
         source_url=source_url,
-        owner_id=current_user.id if current_user else None,
+        owner_id=actor.id if actor else None,
     )
     logger.info(
         "[MANYFOLD] Imported %s (model %s, file %s) as library file %s", filename, model_id, file_id, library_file.id
