@@ -17,7 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core import database
 from backend.app.core.auth import (
+    ApiKeyActor,
     MediaOrRequestPrinterScope,
+    RequestActor,
     RequestPrinterScope,
     RequirePermissionIfAuthEnabled,
     probe_permissions_if_auth_enabled,
@@ -218,7 +220,7 @@ def _ensure_archive_visible(
     return archive
 
 
-def _validate_user_filter_permission(current_user: User | None, created_by_id: int | None):
+def _validate_user_filter_permission(current_user: User | ApiKeyActor | None, created_by_id: int | None):
     """Raise 403 if created_by_id filter is used without stats:filter_by_user permission."""
     if created_by_id is None or current_user is None:
         return
@@ -391,6 +393,7 @@ def archive_to_response(
         "quantity": archive.quantity,
         "energy_kwh": archive.energy_kwh,
         "energy_cost": archive.energy_cost,
+        "wear_cost": archive.wear_cost,
         "created_at": archive.created_at,
         # User tracking (Issue #206)
         "created_by_id": archive.created_by_id,
@@ -710,6 +713,7 @@ async def list_archives_slim(
             PrintLogEntry.cost,
             PrintLogEntry.energy_kwh,
             PrintLogEntry.energy_cost,
+            PrintLogEntry.wear_cost,
             PrintLogEntry.created_at,
         )
         .outerjoin(PrintArchive, PrintArchive.id == PrintLogEntry.archive_id)
@@ -754,6 +758,7 @@ async def list_archives_slim(
             "cost": r.cost,
             "energy_kwh": r.energy_kwh,
             "energy_cost": r.energy_cost,
+            "wear_cost": r.wear_cost,
             "quantity": 1,
             "created_at": r.created_at,
         }
@@ -1136,9 +1141,10 @@ async def export_stats(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.STATS_READ),
     printer_scope: PrinterScope = RequestPrinterScope,
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Export statistics summary to CSV or Excel format."""
-    _validate_user_filter_permission(current_user, created_by_id)
+    _validate_user_filter_permission(actor, created_by_id)
 
     from fastapi.responses import StreamingResponse
 
@@ -1175,6 +1181,7 @@ async def get_archive_stats(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.STATS_READ),
     printer_scope: PrinterScope = RequestPrinterScope,
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Get statistics across all archives.
 
@@ -1185,7 +1192,7 @@ async def get_archive_stats(
     """
     from backend.app.models.print_log import PrintLogEntry
 
-    _validate_user_filter_permission(current_user, created_by_id)
+    _validate_user_filter_permission(actor, created_by_id)
 
     # Build date filter conditions scoped to PrintLogEntry (event-time).
     base_conditions = []
@@ -1259,6 +1266,9 @@ async def get_archive_stats(
 
     cost_result = await db.execute(select(func.sum(PrintLogEntry.cost)).where(*base_conditions))
     total_cost = cost_result.scalar() or 0
+
+    wear_result = await db.execute(select(func.sum(PrintLogEntry.wear_cost)).where(*base_conditions))
+    total_wear_cost = wear_result.scalar() or 0
 
     # By filament type (split comma-separated values for multi-material prints)
     filament_type_result = await db.execute(
@@ -1414,6 +1424,7 @@ async def get_archive_stats(
         time_accuracy_by_printer=accuracy_by_printer if accuracy_by_printer else None,
         total_energy_kwh=round(total_energy_kwh, 3),
         total_energy_cost=round(total_energy_cost, 3),
+        total_wear_cost=round(total_wear_cost, 2),
         energy_data_warming_up=energy_data_warming_up,
     )
 
@@ -4908,6 +4919,7 @@ async def slice_archive(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_UPLOAD),
     printer_scope: PrinterScope = MediaOrRequestPrinterScope,
+    actor: User | ApiKeyActor | None = RequestActor,
 ):
     """Enqueue a slice job for an archive's source. Returns 202 + job_id;
     the slice runs in the background, the caller polls `GET /slice-jobs/{id}`.
@@ -4926,10 +4938,10 @@ async def slice_archive(
     archive = await db.get(PrintArchive, archive_id)
     # Per-row ownership gate — mirror the archive read routes. LIBRARY_UPLOAD
     # alone let a READ_OWN caller slice another user's archive by raw id even
-    # though GET on that id returned 404. API-key / auth-disabled callers
-    # (current_user is None) keep can_read_all=True — no per-row identity.
-    can_read_all = current_user is None or current_user.has_permission(Permission.ARCHIVES_READ_ALL.value)
-    archive = _ensure_archive_visible(archive, current_user, can_read_all, printer_scope)
+    # though GET on that id returned 404. An API key is checked as its owner
+    # (RequestActor); only auth off keeps can_read_all=True.
+    can_read_all = actor is None or actor.has_permission(Permission.ARCHIVES_READ_ALL.value)
+    archive = _ensure_archive_visible(archive, actor, can_read_all, printer_scope)
 
     src_relative = archive.source_3mf_path or archive.file_path
     if not src_relative:

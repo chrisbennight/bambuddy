@@ -77,6 +77,8 @@ class PrinterUpdate(BaseModel):
     is_active: bool | None = None
     auto_archive: bool | None = None
     print_hours_offset: float | None = None
+    # Wear cost per printing hour (#694); null or 0 turns it off.
+    wear_cost_per_hour: float | None = Field(default=None, ge=0, le=100000)
     external_camera_url: str | None = None
     external_camera_type: str | None = None
     external_camera_enabled: bool | None = None
@@ -97,6 +99,7 @@ class PrinterResponse(PrinterBase):
     # printer_models.supports_nozzle_flow_type.
     supports_nozzle_flow_type: bool = True
     print_hours_offset: float = 0.0
+    wear_cost_per_hour: float | None = None  # #694
     external_camera_url: str | None = None
     external_camera_type: str | None = None
     external_camera_enabled: bool = False
@@ -132,6 +135,7 @@ class PrinterResponse(PrinterBase):
             "nozzle_count": printer.nozzle_count,
             "supports_nozzle_flow_type": supports_nozzle_flow_type(printer.model),
             "print_hours_offset": printer.print_hours_offset,
+            "wear_cost_per_hour": printer.wear_cost_per_hour,
             "plate_detection_enabled": printer.plate_detection_enabled,
             "created_at": printer.created_at,
             "updated_at": printer.updated_at,

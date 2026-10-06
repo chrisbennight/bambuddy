@@ -144,6 +144,8 @@ class PrintArchive(Base):
     # Energy tracking
     energy_kwh: Mapped[float | None] = mapped_column(Float)  # Energy consumed in kWh
     energy_cost: Mapped[float | None] = mapped_column(Float)  # Cost of energy consumed
+    # Printer wear for the first run, at the printer's hourly wear cost (#694).
+    wear_cost: Mapped[float | None] = mapped_column(Float)
     # Plug lifetime counter captured at print start; delta at print end becomes energy_kwh.
     # Persisted so per-print tracking survives backend restarts mid-print (#941).
     energy_start_kwh: Mapped[float | None] = mapped_column(Float)

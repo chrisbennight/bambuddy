@@ -456,6 +456,7 @@ export interface Printer {
   camera_light_auto: boolean;  // picked for the chamber light when camera_light_mode is 'selected' (#1655)
   plate_detection_enabled: boolean;  // Check plate before print
   plate_detection_roi?: PlateDetectionROI;  // ROI for plate detection
+  wear_cost_per_hour: number | null;  // Wear cost per printing hour (#694)
   created_at: string;
   updated_at: string;
 }
@@ -763,6 +764,7 @@ export interface PrinterCreate {
   camera_light_auto?: boolean;
   plate_detection_enabled?: boolean;
   plate_detection_roi?: PlateDetectionROI;
+  wear_cost_per_hour?: number | null;
 }
 
 // Plate Detection
@@ -891,6 +893,7 @@ export interface Archive {
   quantity: number;
   energy_kwh: number | null;
   energy_cost: number | null;
+  wear_cost: number | null;  // Printer wear (#694)
   created_at: string;
   // User tracking (Issue #206)
   created_by_id: number | null;
@@ -917,6 +920,7 @@ export interface ArchiveSlim {
   cost: number | null;
   energy_kwh: number | null;
   energy_cost: number | null;
+  wear_cost: number | null;  // Printer wear (#694)
   quantity: number;
   created_at: string;
 }
@@ -937,6 +941,7 @@ export interface PrintLogEntry {
   cost: number | null;
   energy_kwh: number | null;
   energy_cost: number | null;
+  wear_cost: number | null;  // Printer wear (#694)
   failure_reason: string | null;
   thumbnail_path: string | null;
   created_by_id: number | null;
@@ -966,6 +971,7 @@ export interface ArchiveStats {
   time_accuracy_by_printer: Record<string, number> | null;
   total_energy_kwh: number;
   total_energy_cost: number;
+  total_wear_cost: number;  // Printer wear (#694)
   // True when a date-filtered total-consumption query is running on incomplete
   // snapshot history (e.g. right after upgrade, before hourly snapshots have
   // a baseline). UI should explain why the number may undercount.
@@ -1084,6 +1090,7 @@ export interface ProjectStats {
   estimated_cost: number;
   total_energy_kwh: number;
   total_energy_cost: number;
+  total_wear_cost: number;  // Printer wear (#694)
   remaining_prints: number | null;  // Remaining plates
   remaining_parts: number | null;  // Remaining parts
   bom_total_items: number;
@@ -1583,6 +1590,7 @@ export interface AppSettings {
   ldap_default_group: string;
   obico_enabled: boolean;
   obico_ml_url: string;
+  bambuddy_internal_url: string;
   obico_ml_token: string;
   obico_sensitivity: 'low' | 'medium' | 'high';
   obico_action: 'notify' | 'pause' | 'pause_and_off';
@@ -3139,7 +3147,7 @@ export interface Filament {
 }
 
 // Notification Provider types
-export type ProviderType = 'callmebot' | 'ntfy' | 'pushover' | 'telegram' | 'email' | 'discord' | 'webhook' | 'homeassistant' | 'bark';
+export type ProviderType = 'callmebot' | 'ntfy' | 'pushover' | 'telegram' | 'email' | 'discord' | 'webhook' | 'homeassistant' | 'bark' | 'gotify';
 // How a Telegram provider collects the outcome verdict (#3046)
 export type TelegramVerdictMode = 'buttons' | 'reactions' | 'both';
 

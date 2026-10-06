@@ -904,3 +904,33 @@ class TestListPrinterModels:
 
         result = sp.list_printer_models()
         assert result is not PRINTER_MODEL_MAP
+
+
+class TestNoUserWithAuthOn:
+    """The sign-in stored without a user is the auth-off install's, and may be
+    left over after auth was turned on. A caller with no user while auth is
+    on (an API key without Allow Cloud Access) must not list its presets."""
+
+    @pytest.mark.asyncio
+    async def test_bambu_cloud(self):
+        sp._cloud_cache.clear()
+        with (
+            patch.object(sp, "is_auth_enabled", AsyncMock(return_value=True)),
+            patch.object(sp, "get_stored_token", AsyncMock(return_value=("global-tok", None, None))) as get_tok,
+        ):
+            slots, status = await sp._fetch_cloud_presets(MagicMock(), None)
+        assert status == "not_authenticated"
+        assert slots == {"printer": [], "process": [], "filament": []}
+        get_tok.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_orca_cloud(self):
+        sp._orca_cloud_cache.clear()
+        with (
+            patch.object(sp, "is_auth_enabled", AsyncMock(return_value=True)),
+            patch.object(sp, "_load_orca_credentials", AsyncMock()) as load,
+        ):
+            slots, status = await sp._fetch_orca_cloud_presets(MagicMock(), None)
+        assert status == "not_authenticated"
+        assert slots == {"printer": [], "process": [], "filament": []}
+        load.assert_not_called()

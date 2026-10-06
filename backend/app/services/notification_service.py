@@ -110,6 +110,32 @@ def _assert_safe_provider_url(url: str, *, label: str) -> str | None:
     return None
 
 
+def _event_priority_level(config: dict, event_type: str | None) -> int | None:
+    """The 1-5 priority level mapped to this event in config.event_priorities.
+
+    1=min, 2=low, 3=default, 4=high, 5=urgent, as the dialog writes them for
+    ntfy (#990) and Gotify (#2743). None when the event has no valid entry.
+    """
+    event_priorities = config.get("event_priorities") or {}
+    if not event_type or not isinstance(event_priorities, dict):
+        return None
+    raw = event_priorities.get(event_type)
+    if raw is None and not event_type.startswith("on_"):
+        raw = event_priorities.get(f"on_{event_type}")
+    try:
+        level = int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+    if level is not None and 1 <= level <= 5:
+        return level
+    return None
+
+
+# Gotify priorities run 0-10; its Android app stays silent below 4 and pops
+# the notification up from 8. The dialog's five levels map onto those bands.
+_GOTIFY_PRIORITY_BY_LEVEL = {1: 0, 2: 2, 3: 5, 4: 8, 5: 10}
+
+
 def _opaque_http_failure(response: httpx.Response, *, label: str) -> str:
     """Failure message for a provider whose destination host the user supplies.
 
@@ -369,6 +395,9 @@ class NotificationService:
             elif provider_type == "bark":
                 photo_url = await self._get_or_build_photo_url(db, image_data, "test") if attach_photo else None
                 return await self._send_bark(config, title, message, image_url=photo_url)
+            elif provider_type == "gotify":
+                photo_url = await self._get_or_build_photo_url(db, image_data, "test") if attach_photo else None
+                return await self._send_gotify(config, title, message, event_type="test", image_url=photo_url)
             else:
                 return False, f"Unknown provider type: {provider_type}"
         except Exception as e:
@@ -455,6 +484,58 @@ class NotificationService:
             return True, "Message sent successfully"
         return False, _opaque_http_failure(response, label="Bark server")
 
+    async def _send_gotify(
+        self,
+        config: dict,
+        title: str,
+        message: str,
+        event_type: str | None = None,
+        url: str | None = None,
+        image_url: str | None = None,
+    ) -> tuple[bool, str]:
+        """Send notification via a self-hosted Gotify server (#2743).
+
+        POSTs JSON to {server}/message with the application token in the
+        X-Gotify-Key header, so the token never ends up in a URL or a log line.
+        Gotify takes no uploads: a photo goes in as a URL its Android app
+        fetches itself, and ``url`` opens on tap.
+        """
+        server = (config.get("server") or "").strip().rstrip("/")
+        # Gotify's own docs show the full endpoint, so a pasted ".../message"
+        # must not turn into ".../message/message".
+        server = server.removesuffix("/message")
+        app_token = (config.get("app_token") or "").strip()
+
+        if not server or not app_token:
+            return False, "Server URL and app token are required"
+
+        url_error = _assert_safe_provider_url(server, label="Gotify server URL")
+        if url_error:
+            return False, url_error
+
+        # Events without a mapped level go out at Gotify's middle band (5), the
+        # "Default" the dialog shows for them -- sound on, no pop-up.
+        level = _event_priority_level(config, event_type) or 3
+        payload: dict[str, Any] = {
+            "title": title,
+            "message": message,
+            "priority": _GOTIFY_PRIORITY_BY_LEVEL[level],
+        }
+        notification_extras: dict[str, Any] = {}
+        if url:
+            notification_extras["click"] = {"url": url}
+        if image_url:
+            notification_extras["bigImageUrl"] = image_url
+        if notification_extras:
+            payload["extras"] = {"client::notification": notification_extras}
+
+        client = await self._get_client()
+        response = await client.post(f"{server}/message", json=payload, headers={"X-Gotify-Key": app_token})
+
+        if response.status_code == 200:
+            return True, "Message sent successfully"
+        return False, _opaque_http_failure(response, label="Gotify server")
+
     async def _send_ntfy(
         self,
         config: dict,
@@ -498,17 +579,9 @@ class NotificationService:
         # lookup used to miss for every real notification and hit only in tests
         # that called this method with the prefixed name (issue #3139). Both
         # spellings are accepted, which also leaves stored configs untouched.
-        event_priorities = config.get("event_priorities") or {}
-        if event_type and isinstance(event_priorities, dict):
-            raw = event_priorities.get(event_type)
-            if raw is None and not event_type.startswith("on_"):
-                raw = event_priorities.get(f"on_{event_type}")
-            try:
-                priority = int(raw) if raw is not None else None
-            except (TypeError, ValueError):
-                priority = None
-            if priority is not None and 1 <= priority <= 5:
-                headers["Priority"] = str(priority)
+        priority = _event_priority_level(config, event_type)
+        if priority is not None:
+            headers["Priority"] = str(priority)
 
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
@@ -1396,6 +1469,21 @@ class NotificationService:
                     else None
                 )
                 return await self._send_bark(config, title, message, url=bark_url, image_url=photo_url)
+            elif provider.provider_type == "gotify":
+                # Outcome confirmation (#1898): like Bark, Gotify opens one URL
+                # on tap -- deep-link into the confirmation dialog.
+                gotify_url = None
+                _gotify_confirm = (variables or {}).get("confirm_url")
+                if event_type == "print_confirm_request" and _gotify_confirm and _gotify_confirm.startswith("http"):
+                    gotify_url = _gotify_confirm
+                photo_url = (
+                    await self._get_or_build_photo_url(db, image_data, event_type, photo_cache)
+                    if provider.attach_photo
+                    else None
+                )
+                return await self._send_gotify(
+                    config, title, message, event_type=event_type, url=gotify_url, image_url=photo_url
+                )
             else:
                 return False, f"Unknown provider type: {provider.provider_type}"
         except Exception as e:

@@ -47,6 +47,7 @@ _SORTABLE_COLUMNS = {
     "cost": PrintLogEntry.cost,
     "energy": PrintLogEntry.energy_kwh,
     "energy_cost": PrintLogEntry.energy_cost,
+    "wear_cost": PrintLogEntry.wear_cost,
 }
 
 

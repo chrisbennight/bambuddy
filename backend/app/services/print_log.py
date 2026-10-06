@@ -6,11 +6,25 @@ Log entries are written to a separate table and never touch archives or queue it
 import logging
 from datetime import datetime
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.print_log import PrintLogEntry
 
 logger = logging.getLogger(__name__)
+
+
+def wear_cost_for_run(duration_seconds: int | None, wear_cost_per_hour: float | None) -> float | None:
+    """Printer wear for one run: its duration at the printer's hourly rate (#694).
+
+    None when the printer has no rate or the run has no measured duration (a
+    reconciled run stores 0 because its real end time is unknown).
+    """
+    if not isinstance(wear_cost_per_hour, int | float) or not isinstance(duration_seconds, int):
+        return None
+    if wear_cost_per_hour <= 0 or duration_seconds <= 0:
+        return None
+    return round(duration_seconds / 3600 * wear_cost_per_hour, 3)
 
 
 async def write_log_entry(
@@ -30,6 +44,7 @@ async def write_log_entry(
     cost: float | None = None,
     energy_kwh: float | None = None,
     energy_cost: float | None = None,
+    wear_cost_per_hour: float | None = None,
     failure_reason: str | None = None,
     thumbnail_path: str | None = None,
     created_by_id: int | None = None,
@@ -71,6 +86,7 @@ async def write_log_entry(
         cost=cost,
         energy_kwh=energy_kwh,
         energy_cost=energy_cost,
+        wear_cost=wear_cost_for_run(duration, wear_cost_per_hour),
         failure_reason=failure_reason,
         thumbnail_path=thumbnail_path,
         created_by_id=created_by_id,
@@ -79,3 +95,17 @@ async def write_log_entry(
     db.add(entry)
     await db.flush()
     return entry
+
+
+async def record_archive_wear(db: AsyncSession, archive, entry: PrintLogEntry) -> None:
+    """Copy a run's wear cost onto its archive when it is the archive's first run.
+
+    Same rule as energy (#1378): the archive shows its first print, and a
+    reprint's wear stays on its own log entry (#694). ``entry`` must already be
+    flushed, so it counts as one of the archive's runs.
+    """
+    if entry.wear_cost is None:
+        return
+    runs = await db.scalar(select(func.count(PrintLogEntry.id)).where(PrintLogEntry.archive_id == archive.id))
+    if (runs or 0) <= 1:
+        archive.wear_cost = entry.wear_cost

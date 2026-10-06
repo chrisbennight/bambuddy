@@ -224,6 +224,75 @@ describe('AddNotificationModal — ntfy Priority (#990)', () => {
   });
 });
 
+describe('AddNotificationModal — Gotify (#2743)', () => {
+  const gotifyProvider = () =>
+    buildProvider({
+      name: 'My Gotify',
+      provider_type: 'gotify',
+      config: { server: 'https://gotify.example.com', app_token: 'Atoken' },
+    });
+
+  it('shows the server and token fields, with the token masked', async () => {
+    render(<AddNotificationModal provider={gotifyProvider()} onClose={() => undefined} />);
+
+    expect(await screen.findByDisplayValue('https://gotify.example.com')).toBeInTheDocument();
+    const token = screen.getByDisplayValue('Atoken');
+    expect(token).toHaveAttribute('type', 'password');
+  });
+
+  it('renders its own priority section and saves event_priorities', async () => {
+    let captured: unknown = null;
+    server.use(
+      http.patch('*/api/v1/notifications/1', async ({ request }) => {
+        captured = await request.json();
+        return HttpResponse.json({ id: 1 });
+      }),
+    );
+
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<AddNotificationModal provider={gotifyProvider()} onClose={onClose} />);
+
+    const sectionHeader = await screen.findByText(/gotify priority/i);
+    expect(screen.queryByText(/ntfy priority/i)).not.toBeInTheDocument();
+    const sectionRoot = sectionHeader.closest('div')!;
+    const failedRow = within(sectionRoot).getByText('Failed').closest('div')!;
+    await user.selectOptions(within(failedRow).getByRole('combobox'), '4');
+
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    const payload = captured as { config: Record<string, unknown> };
+    expect(payload.config).toMatchObject({
+      server: 'https://gotify.example.com',
+      app_token: 'Atoken',
+      event_priorities: { on_print_failed: 4 },
+    });
+  });
+});
+
+describe('AddNotificationModal — provider type list', () => {
+  it('lists the providers alphabetically by their label', async () => {
+    render(<AddNotificationModal onClose={() => undefined} />);
+
+    const select = (await screen.findByDisplayValue('Email')) as HTMLSelectElement;
+    const labels = Array.from(select.options).map((o) => o.textContent);
+
+    expect(labels).toEqual([
+      'Bark',
+      'CallMeBot/WhatsApp',
+      'Discord',
+      'Email',
+      'Gotify',
+      'Home Assistant',
+      'ntfy',
+      'Pushover',
+      'Telegram',
+      'Webhook',
+    ]);
+  });
+});
+
 describe('AddNotificationModal — plate clear required (#2525)', () => {
   it('renders the toggle off by default', async () => {
     render(<AddNotificationModal provider={buildProvider()} onClose={() => undefined} />);
